@@ -8,6 +8,8 @@ import type { Round } from '@/lib/types/database'
 export function TextResponseUI({ round }: { round: Round }) {
   const { session } = useSession()
   const [response, setResponse] = useState('')
+  const isImplementation = round.config?.track === 'implementation'
+  const customGuidance = round.config?.guidance as string[] | undefined
 
   const handleChange = async (value: string) => {
     setResponse(value)
@@ -39,14 +41,23 @@ export function TextResponseUI({ round }: { round: Round }) {
     <div className="space-y-4">
       <Textarea
         rows={14}
-        placeholder="Write your internal handoff note here...
+        placeholder={isImplementation
+          ? `Write your go-live checklist and acceptance criteria here...
+
+Structure suggestions:
+- Technical readiness checks (SSO, data migration, API integrations)
+- Stakeholder sign-off matrix (who approves what)
+- Rollback plan with specific triggers
+- Success metrics for first 48 hours
+- Communication plan for go-live day`
+          : `Write your internal handoff note here...
 
 Example structure:
 - Deal summary (customer, opportunity size, timeline)
 - Key commitments made
 - Open questions or risks
 - Next steps for the account team
-- Who needs to be involved"
+- Who needs to be involved`}
         value={response}
         onChange={(e) => handleChange(e.target.value)}
         className="font-sans"
@@ -76,15 +87,23 @@ Example structure:
         </div>
       )}
 
-      <div className="rounded-2xl border border-ink-100 bg-white px-4 py-4">
-        <h3 className="mb-3 text-sm font-semibold">What to Include</h3>
-        <ul className="space-y-2 text-sm text-ink-600">
-          <li>✓ Deal status summary (where we are, what was discussed)</li>
-          <li>✓ Key commitments made (timeline, pricing, deliverables)</li>
-          <li>✓ Identified risks or red flags</li>
-          <li>✓ Next steps with owners and deadlines</li>
-          <li>✓ Who needs to be looped in (sales eng, legal, product)</li>
-        </ul>
+      <div className="rounded-2xl bg-ink-50/60 px-4 py-4">
+        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-ink-500">What to Include</h3>
+        {customGuidance ? (
+          <ul className="space-y-1.5 text-xs text-ink-500">
+            {customGuidance.map((item, i) => (
+              <li key={i}>&#10003; {item}</li>
+            ))}
+          </ul>
+        ) : (
+          <ul className="space-y-1.5 text-xs text-ink-500">
+            <li>&#10003; Deal status summary (where we are, what was discussed)</li>
+            <li>&#10003; Key commitments made (timeline, pricing, deliverables)</li>
+            <li>&#10003; Identified risks or red flags</li>
+            <li>&#10003; Next steps with owners and deadlines</li>
+            <li>&#10003; Who needs to be looped in (sales eng, legal, product)</li>
+          </ul>
+        )}
       </div>
     </div>
   )

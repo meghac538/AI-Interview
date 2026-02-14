@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { MessageSquareText, Send, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { useSession } from '@/contexts/SessionContext'
 
@@ -13,27 +13,27 @@ interface Message {
   content: string
 }
 
-const STARTER_MESSAGE: Message = {
-  role: 'assistant',
-  content: 'I can help outline discovery questions, summarize objections, or flag overpromising risks. What would you like guidance on?'
+const TRACK_CONFIG: Record<string, { starter: string; permissions: string[]; restrictions: string[] }> = {
+  sales: {
+    starter: 'I can help outline discovery questions, summarize objections, or flag overpromising risks. What would you like guidance on?',
+    permissions: ['Summarize objections', 'Suggest frameworks', 'Flag risks'],
+    restrictions: ['No complete scripts', 'No exact copy', 'Outline-only']
+  },
+  implementation: {
+    starter: 'I can help outline de-escalation frameworks, suggest risk mitigation structures, or flag scope concerns. What would you like guidance on?',
+    permissions: ['De-escalation frameworks', 'Risk structures', 'Scope analysis'],
+    restrictions: ['No complete emails', 'No technical answers', 'Outline-only']
+  }
 }
 
-const PERMISSIONS = [
-  'Summarize objections',
-  'Suggest frameworks',
-  'Flag risks'
-]
-
-const RESTRICTIONS = [
-  'No complete scripts',
-  'No exact copy',
-  'Outline-only'
-]
-
-export function SidekickPanel({ role }: { role: string }) {
+export function SidekickPanel({ role, track = 'sales' }: { role: string; track?: string }) {
   const { session, currentRound } = useSession()
+  const config = TRACK_CONFIG[track] || TRACK_CONFIG.sales
+
   const [open, setOpen] = useState(false)
-  const [messages, setMessages] = useState<Message[]>([STARTER_MESSAGE])
+  const [messages, setMessages] = useState<Message[]>([
+    { role: 'assistant', content: config.starter }
+  ])
   const [draft, setDraft] = useState('')
   const [loading, setLoading] = useState(false)
   const [queriesRemaining, setQueriesRemaining] = useState(6)
@@ -52,7 +52,7 @@ export function SidekickPanel({ role }: { role: string }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           session_id: session?.id,
-          round_id: currentRound?.id,
+          round_id: currentRound?.round_number,
           query: draft,
           history: messages
         })
@@ -123,15 +123,11 @@ export function SidekickPanel({ role }: { role: string }) {
               <h3 className="text-base font-semibold">Role: {role}</h3>
               <Badge tone="signal">{queriesRemaining} queries left</Badge>
             </div>
-            <div className="flex flex-wrap gap-2">
-              {PERMISSIONS.map((item) => (
-                <Badge key={item} tone="sky">
-                  {item}
-                </Badge>
-              ))}
-            </div>
+            <p className="text-xs text-ink-600">
+              Can help with: {config.permissions.join(' / ')}
+            </p>
             <p className="text-xs text-ink-500">
-              Restrictions: {RESTRICTIONS.join(' | ')}
+              Restrictions: {config.restrictions.join(' | ')}
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -154,19 +150,22 @@ export function SidekickPanel({ role }: { role: string }) {
                 </div>
               )}
             </div>
-            <div className="flex items-center gap-2">
-              <Input
-                placeholder="Ask for outline guidance..."
+            <div className="flex items-end gap-2">
+              <Textarea
+                rows={2}
+                placeholder="Ask for outline guidance... (Shift+Enter for new line)"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={handleKeyDown}
                 disabled={loading || queriesRemaining === 0}
+                className="resize-none"
               />
               <Button
                 variant="outline"
                 size="sm"
                 onClick={sendMessage}
                 disabled={loading || queriesRemaining === 0 || !draft.trim()}
+                className="shrink-0"
               >
                 <Send className="h-4 w-4" />
               </Button>

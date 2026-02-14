@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
-import { Send } from 'lucide-react'
+import { Send, Loader2 } from 'lucide-react'
 import { useSession } from '@/contexts/SessionContext'
 import type { Round } from '@/lib/types/database'
 
@@ -17,11 +17,15 @@ interface EmailMessage {
 
 export function EmailThreadUI({ round }: { round: Round }) {
   const { session } = useSession()
+  const isImplementation = round.config?.track === 'implementation'
+  const initialEmail = round.config?.initial_email
+  const personaType = round.config?.persona_type
+
   const [emailThread, setEmailThread] = useState<EmailMessage[]>([
     {
       from: 'prospect',
-      subject: 'Re: Pricing Discussion',
-      body: `Hi there,
+      subject: initialEmail?.subject || 'Re: Pricing Discussion',
+      body: initialEmail?.body || `Hi there,
 
 Thanks for the proposal. We're very interested but I need to be honest - your pricing is about 20% higher than we budgeted for this project.
 
@@ -36,9 +40,15 @@ VP of Operations, MidSize Tech Corp`,
     }
   ])
 
-  const [draftSubject, setDraftSubject] = useState('Re: Pricing Discussion')
+  const senderName = initialEmail?.from || 'Sarah Chen'
+  const senderTitle = initialEmail?.title || 'Prospect'
+
+  const [draftSubject, setDraftSubject] = useState(
+    `Re: ${initialEmail?.subject || 'Pricing Discussion'}`
+  )
   const [draftBody, setDraftBody] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [waitingForReply, setWaitingForReply] = useState(false)
 
   const sendEmail = async () => {
     if (!draftBody.trim() || !session) return
@@ -52,7 +62,6 @@ VP of Operations, MidSize Tech Corp`,
       timestamp: new Date().toISOString()
     }
 
-    // Add to thread
     setEmailThread((prev) => [...prev, newEmail])
 
     // Submit to API
@@ -72,31 +81,49 @@ VP of Operations, MidSize Tech Corp`,
       })
     })
 
-    // Clear draft
     setDraftBody('')
     setSubmitting(false)
 
-    // Simulate prospect response (will be AI-generated in Phase 5)
+    // Get AI response for the prospect's reply
     if (emailThread.length === 1) {
-      setTimeout(() => {
+      setWaitingForReply(true)
+      try {
+        const aiResponse = await fetch('/api/ai/prospect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: session.id,
+            round_number: round.round_number,
+            message: draftBody,
+            conversation_history: [],
+            persona_state: 'neutral',
+            metrics: {},
+            persona_type: personaType || 'sales_prospect'
+          })
+        })
+        const data = await aiResponse.json()
         setEmailThread((prev) => [
           ...prev,
           {
             from: 'prospect',
-            subject: 'Re: Pricing Discussion',
-            body: `Thanks for getting back to me.
-
-I appreciate your response, but I'm still concerned about the timeline. Our CFO is also pushing back on any pricing above our original budget.
-
-Can you guarantee Q1 delivery AND bring the price down to match our budget? Otherwise, I'll need to explore other options.
-
-This is urgent - I need your final answer by EOD.
-
-Sarah`,
+            subject: `Re: ${draftSubject}`,
+            body: data.response || 'Thank you for your response. I need to review this further.',
             timestamp: new Date().toISOString()
           }
         ])
-      }, 5000)
+      } catch {
+        setEmailThread((prev) => [
+          ...prev,
+          {
+            from: 'prospect',
+            subject: `Re: ${draftSubject}`,
+            body: 'Thank you for your response. Let me review and get back to you with follow-up questions.',
+            timestamp: new Date().toISOString()
+          }
+        ])
+      } finally {
+        setWaitingForReply(false)
+      }
     }
   }
 
@@ -118,7 +145,7 @@ Sarah`,
           >
             <div className="flex items-center justify-between text-xs text-ink-500">
               <span className="font-semibold">
-                {email.from === 'candidate' ? 'You' : 'Sarah Chen (Prospect)'}
+                {email.from === 'candidate' ? 'You' : `${senderName} (${senderTitle})`}
               </span>
               <span>{new Date(email.timestamp).toLocaleString()}</span>
             </div>
@@ -130,10 +157,16 @@ Sarah`,
             </p>
           </div>
         ))}
+        {waitingForReply && (
+          <div className="flex items-center gap-2 rounded-2xl border border-skywash-200 bg-skywash-50 px-4 py-3">
+            <Loader2 className="h-4 w-4 animate-spin text-skywash-600" />
+            <span className="text-sm text-skywash-700">{senderName} is typing a response...</span>
+          </div>
+        )}
       </div>
 
       {/* Email Composer */}
-      {emailThread.length < 3 && (
+      {emailThread.length < 3 && !waitingForReply && (
         <div className="space-y-3 rounded-2xl border border-ink-200 bg-white px-4 py-4">
           <h3 className="text-sm font-semibold">
             Your Response {emailThread.length === 2 ? '(Draft 2)' : '(Draft 1)'}
@@ -145,14 +178,23 @@ Sarah`,
           />
           <Textarea
             rows={12}
-            placeholder="Draft your professional response...
+            placeholder={isImplementation
+              ? `Draft your response to the client...
+
+Tips:
+- Acknowledge their concerns directly
+- Be transparent about current status
+- Provide specific next steps with timelines
+- Assign ownership for each action item
+- Avoid legal overreach or vague reassurances`
+              : `Draft your professional response...
 
 Tips:
 - Acknowledge their concerns
 - Justify your value proposition
 - Address timeline realistically
 - Protect your margins
-- Be firm but collaborative"
+- Be firm but collaborative`}
             value={draftBody}
             onChange={(e) => setDraftBody(e.target.value)}
           />
@@ -175,21 +217,30 @@ Tips:
       {emailThread.length === 3 && (
         <div className="rounded-2xl bg-signal-50 border border-signal-200 px-4 py-3">
           <p className="text-sm text-signal-800">
-            <strong>Round Complete:</strong> You've sent both responses. Click "Submit & Next" to complete this round.
+            <strong>Round Complete:</strong> You&apos;ve sent both responses. Click &quot;Submit &amp; Next&quot; to complete this round.
           </p>
         </div>
       )}
 
       {/* Scoring Criteria */}
-      <div className="rounded-2xl border border-ink-100 bg-white px-4 py-4">
-        <h3 className="mb-3 text-sm font-semibold">Evaluation Criteria</h3>
-        <ul className="space-y-2 text-sm text-ink-600">
-          <li>• <strong>Negotiation posture:</strong> Firm but collaborative</li>
-          <li>• <strong>Professionalism:</strong> Clear, respectful tone</li>
-          <li>• <strong>Rejection handling:</strong> No desperation or defensiveness</li>
-          <li>• <strong>Margin protection:</strong> Justify value, don't cave on price</li>
-          <li>• <strong>Realistic commitments:</strong> Only promise what you can deliver</li>
-        </ul>
+      <div className="rounded-2xl bg-ink-50/60 px-4 py-4">
+        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-ink-500">Evaluation Criteria</h3>
+        {isImplementation ? (
+          <ul className="space-y-1.5 text-xs text-ink-500">
+            <li>&#8226; <strong className="text-ink-600">Tone & Clarity:</strong> Calm, professional, empathetic</li>
+            <li>&#8226; <strong className="text-ink-600">De-escalation:</strong> Validate concerns without being defensive</li>
+            <li>&#8226; <strong className="text-ink-600">Commitment Accuracy:</strong> Realistic, specific promises</li>
+            <li>&#8226; <strong className="text-ink-600">Next Steps:</strong> Clear actions with owners and timelines</li>
+          </ul>
+        ) : (
+          <ul className="space-y-1.5 text-xs text-ink-500">
+            <li>&#8226; <strong className="text-ink-600">Negotiation posture:</strong> Firm but collaborative</li>
+            <li>&#8226; <strong className="text-ink-600">Professionalism:</strong> Clear, respectful tone</li>
+            <li>&#8226; <strong className="text-ink-600">Rejection handling:</strong> No desperation or defensiveness</li>
+            <li>&#8226; <strong className="text-ink-600">Margin protection:</strong> Justify value, don&apos;t cave on price</li>
+            <li>&#8226; <strong className="text-ink-600">Realistic commitments:</strong> Only promise what you can deliver</li>
+          </ul>
+        )}
       </div>
     </div>
   )

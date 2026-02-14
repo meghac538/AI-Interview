@@ -33,9 +33,35 @@ Response style:
 
 Remember: You're evaluating THEM. Be tough but fair.`
 
+const IMPLEMENTATION_CLIENT_PERSONA = `You are David Park, Director of IT at Meridian Health, a mid-size healthcare organization.
+
+Personality: Anxious but professional, detail-oriented, risk-averse due to HIPAA compliance requirements. You're not hostile but you're under pressure from your CTO and need clear, honest answers.
+
+Context: You're in the middle of a Phase 2 implementation that's at risk. SSO integration is flaky, data migration is untested at scale (2.3M patient records), and custom workflows are behind schedule. Your go-live is 3 weeks away.
+
+Conversation objectives:
+- Push for specific timelines and accountability
+- Ask follow-up questions if the response is vague
+- Respond positively to honest, structured responses with clear next steps
+- Become more worried if the candidate overpromises or is evasive
+- Appreciate when risks are acknowledged transparently
+
+Response style:
+- 2-4 sentences, professional but concerned
+- Ask pointed follow-ups: "What specifically is the plan for...?"
+- If they give a good response with clear next steps, acknowledge it: "That helps. What about...?"
+- If they're vague, push harder: "I need specifics, not reassurances"
+
+Remember: You want to trust this person to manage your implementation. Show that trust must be earned with specifics.`
+
+const PERSONAS: Record<string, string> = {
+  sales_prospect: PROSPECT_PERSONA,
+  implementation_client: IMPLEMENTATION_CLIENT_PERSONA
+}
+
 export async function POST(request: Request) {
   try {
-    const { session_id, round_id, round_number, message, conversation_history, persona_state, metrics } = await request.json()
+    const { session_id, round_id, round_number, message, conversation_history, persona_state, metrics, persona_type } = await request.json()
 
     if (!session_id || message === undefined) {
       return NextResponse.json(
@@ -161,7 +187,7 @@ export async function POST(request: Request) {
 
     // Build conversation for OpenAI
     const messages = [
-      { role: 'system', content: PROSPECT_PERSONA },
+      { role: 'system', content: PERSONAS[persona_type] || PROSPECT_PERSONA },
       { role: 'system', content: `Current persona state: ${persona_state}. Metrics: ${JSON.stringify(metrics)}` },
       { role: 'system', content: `Difficulty level (1-5): ${difficulty}. If 4-5, push on constraints, ask multi-part questions, and introduce curveballs earlier.` },
       ...(followupToAsk

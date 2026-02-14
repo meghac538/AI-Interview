@@ -4,14 +4,25 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
 
 export default function TestPage() {
+  const [track, setTrack] = useState('sales')
   const [candidateName, setCandidateName] = useState('Jane Doe')
   const [role, setRole] = useState('Account Executive')
   const [level, setLevel] = useState('mid')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<any>(null)
   const [error, setError] = useState<string | null>(null)
+
+  const handleTrackChange = (newTrack: string) => {
+    setTrack(newTrack)
+    if (newTrack === 'implementation') {
+      setRole('Implementation Manager')
+    } else {
+      setRole('Account Executive')
+    }
+  }
 
   const createSession = async () => {
     setLoading(true)
@@ -25,7 +36,8 @@ export default function TestPage() {
         body: JSON.stringify({
           candidate_name: candidateName,
           role,
-          level
+          level,
+          track
         })
       })
 
@@ -57,6 +69,17 @@ export default function TestPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
+            <label className="text-sm font-medium block mb-1">Track</label>
+            <Select
+              value={track}
+              onChange={(e) => handleTrackChange(e.target.value)}
+            >
+              <option value="sales">Sales (BDR/AE)</option>
+              <option value="implementation">Implementation / Customer Outcomes</option>
+            </Select>
+          </div>
+
+          <div>
             <label className="text-sm font-medium block mb-1">Candidate Name</label>
             <Input
               value={candidateName}
@@ -76,15 +99,14 @@ export default function TestPage() {
 
           <div>
             <label className="text-sm font-medium block mb-1">Level</label>
-            <select
+            <Select
               value={level}
               onChange={(e) => setLevel(e.target.value)}
-              className="w-full px-3 py-2 border rounded-md"
             >
               <option value="junior">Junior</option>
               <option value="mid">Mid</option>
               <option value="senior">Senior</option>
-            </select>
+            </Select>
           </div>
 
           <Button
@@ -96,16 +118,16 @@ export default function TestPage() {
           </Button>
 
           {error && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm">
+            <div className="rounded-2xl border border-signal-200 bg-signal-100 px-4 py-3 text-sm text-signal-800">
               <strong>Error:</strong> {error}
             </div>
           )}
 
           {result && (
-            <div className="p-3 bg-green-50 border border-green-200 rounded text-green-700 text-sm space-y-2">
-              <p><strong>✅ Session Created!</strong></p>
-              <p className="text-xs">Session ID: <code>{result.session.id}</code></p>
-              <p className="text-xs">Redirecting to candidate view...</p>
+            <div className="rounded-2xl border border-skywash-200 bg-skywash-50 px-4 py-3 text-sm text-skywash-800 space-y-1">
+              <p className="font-semibold">Session Created</p>
+              <p className="text-xs text-skywash-700">Session ID: <code className="bg-skywash-100 px-1.5 py-0.5 rounded">{result.session.id}</code></p>
+              <p className="text-xs text-skywash-700">Redirecting to candidate view...</p>
             </div>
           )}
         </CardContent>

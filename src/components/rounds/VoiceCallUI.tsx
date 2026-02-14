@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { MessageSquare, Send, CheckCircle2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { useSession } from '@/contexts/SessionContext'
 import type { Round } from '@/lib/types/database'
 
@@ -201,7 +201,7 @@ export function VoiceCallUI({ round }: { round: Round }) {
         </div>
 
         <Button
-          variant={chatActive ? 'default' : 'default'}
+          variant={chatActive ? 'danger' : 'primary'}
           size="sm"
           onClick={chatActive ? endChat : startChat}
           className={chatActive ? 'bg-signal-500 hover:bg-signal-600' : ''}
@@ -293,19 +293,22 @@ export function VoiceCallUI({ round }: { round: Round }) {
           </div>
 
           {/* Message Input */}
-          <div className="flex items-center gap-2">
-            <Input
-              placeholder="Type your message..."
+          <div className="flex items-end gap-2">
+            <Textarea
+              rows={3}
+              placeholder="Type your message... (Shift+Enter for new line)"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={handleKeyDown}
               disabled={loading}
+              className="resize-none"
             />
             <Button
               variant="outline"
               size="sm"
               onClick={sendMessage}
               disabled={loading || !draft.trim()}
+              className="shrink-0"
             >
               <Send className="h-4 w-4" />
             </Button>
@@ -314,9 +317,9 @@ export function VoiceCallUI({ round }: { round: Round }) {
       )}
 
       {/* Requirements Checklist */}
-      <div className="rounded-2xl border border-ink-100 bg-white px-4 py-4">
-        <h3 className="mb-3 text-sm font-semibold">Round Requirements</h3>
-        <ul className="space-y-2 text-sm">
+      <div className="rounded-2xl bg-ink-50/60 px-4 py-4">
+        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-ink-500">Round Requirements</h3>
+        <ul className="space-y-2 text-xs">
           <li className="flex items-center gap-2">
             <div className={`h-4 w-4 rounded border flex items-center justify-center ${conversationMetrics.questionsAsked >= 5 ? 'bg-signal-500 border-signal-500' : 'border-ink-300'}`}>
               {conversationMetrics.questionsAsked >= 5 && <CheckCircle2 className="h-3 w-3 text-white" />}

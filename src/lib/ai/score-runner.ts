@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase/server'
-import { generateFollowups, scoreArtifact, STANDARD_DIMENSIONS } from '@/lib/ai/score-smith'
+import { scoreArtifact, getDimensionsForRound } from '@/lib/ai/score-smith'
 
 export async function runScoringForArtifact(artifactId: string) {
   // Get artifact
@@ -35,12 +35,15 @@ export async function runScoringForArtifact(artifactId: string) {
     throw new Error('Round not found in scope package')
   }
 
+  const track = scopePackage.track || 'sales'
+  const dimensions = getDimensionsForRound(track, roundNumber)
+
   const results = await scoreArtifact(
     artifact.session_id,
     roundNumber,
     artifact.id,
     content,
-    STANDARD_DIMENSIONS
+    dimensions
   )
 
   const dimensionScores: Record<string, number> = {}
@@ -52,7 +55,7 @@ export async function runScoringForArtifact(artifactId: string) {
   for (const result of results) {
     const dimension = result.dimension
     const score = Number(result.score) || 0
-    const max = STANDARD_DIMENSIONS.find((d) => d.name === dimension)?.maxScore || 0
+    const max = dimensions.find((d) => d.name === dimension)?.maxScore || 0
 
     dimensionScores[dimension] = score
     scoreSum += score
@@ -72,21 +75,16 @@ export async function runScoringForArtifact(artifactId: string) {
   const confidence = results.length > 0 ? Number((confidenceSum / results.length).toFixed(2)) : 0
 
   const criticalWeak = Object.entries(dimensionScores).some(([key, value]) => {
-    if (key === 'role_depth' && value < 15) return true
-    if (key === 'reasoning' && value < 10) return true
-    if (key === 'verification' && value < 10) return true
-    if (key === 'communication' && value < 8) return true
-    if (key === 'reliability' && value < 8) return true
-    return false
+    const dim = dimensions.find(d => d.name === key)
+    if (!dim) return false
+    return value < dim.maxScore * 0.4
   })
 
-  let redFlags: any[] = []
+  const redFlags: any[] = []
 
   const wordCount = String(content).trim().split(/\s+/).filter(Boolean).length
   if (wordCount < 5) {
-    await supabaseAdmin.from('red_flags').insert({
-      session_id: artifact.session_id,
-      round_id: roundNumber,
+    redFlags.push({
       flag_type: 'insufficient_response',
       severity: 'high',
       description: 'Response too short to evaluate reliably',
@@ -95,9 +93,7 @@ export async function runScoringForArtifact(artifactId: string) {
   }
 
   if (evidenceQuotes.length === 0) {
-    await supabaseAdmin.from('red_flags').insert({
-      session_id: artifact.session_id,
-      round_id: roundNumber,
+    redFlags.push({
       flag_type: 'no_evidence',
       severity: 'high',
       description: 'No evidence quotes available for scoring',
@@ -105,16 +101,20 @@ export async function runScoringForArtifact(artifactId: string) {
     })
   }
 
-  const { data: freshFlags } = await supabaseAdmin
-    .from('red_flags')
-    .select('*')
-    .eq('session_id', artifact.session_id)
-    .eq('round_id', roundNumber)
-    .order('created_at', { ascending: false })
+  // Include red flags detected during dimension scoring
+  for (const result of results) {
+    const dim = dimensions.find(d => d.name === result.dimension)
+    if (dim && result.score < dim.maxScore * 0.3) {
+      redFlags.push({
+        flag_type: `low_${result.dimension}`,
+        severity: 'high',
+        description: `Very low score on ${result.dimension}: ${result.reasoning}`,
+        evidence: result.evidence?.slice(0, 2) || []
+      })
+    }
+  }
 
-  redFlags = freshFlags || []
-
-  const hasMajorRedFlag = (redFlags || []).some((flag: any) => {
+  const hasMajorRedFlag = redFlags.some((flag: any) => {
     if (flag.severity === 'critical') return true
     const type = String(flag.flag_type || '')
     return [
@@ -133,23 +133,21 @@ export async function runScoringForArtifact(artifactId: string) {
         ? 'caution'
         : 'stop'
 
-  const followups = await generateFollowups(
-    content,
-    dimensionScores,
-    evidenceQuotes.map((item) => ({ dimension: item.dimension, quote: item.quote }))
-  )
-
-  await supabaseAdmin.from('scores').insert({
+  const { error: scoreInsertError } = await supabaseAdmin.from('scores').insert({
     session_id: artifact.session_id,
     round: round.round_number,
     overall_score: overallScore,
     dimension_scores: dimensionScores,
-    red_flags: redFlags || [],
+    red_flags: redFlags,
     confidence,
     evidence_quotes: evidenceQuotes,
-    recommendation,
-    recommended_followups: followups
+    recommendation
   })
+
+  if (scoreInsertError) {
+    console.error('Score insert error:', scoreInsertError)
+    throw scoreInsertError
+  }
 
   await supabaseAdmin.from('live_events').insert({
     session_id: artifact.session_id,
@@ -158,6 +156,8 @@ export async function runScoringForArtifact(artifactId: string) {
     payload: {
       artifact_id: artifact.id,
       round_number: round.round_number,
+      overall_score: overallScore,
+      recommendation,
       dimensions: results.length
     }
   })

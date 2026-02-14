@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase/server'
+import { getRoundPlan } from '@/lib/ai/round-plans'
+import type { Track } from '@/lib/types/database'
 
 export async function POST(request: Request) {
   try {
-    const { candidate_name, role, level } = await request.json()
+    const { candidate_name, role, level, track = 'sales' } = await request.json()
 
     // Validate inputs
     if (!candidate_name || !role || !level) {
@@ -13,6 +15,13 @@ export async function POST(request: Request) {
       )
     }
 
+    const trackValue = track as Track
+    const rounds = getRoundPlan(trackValue)
+
+    const successCriteria = trackValue === 'implementation'
+      ? 'Customer outcomes and implementation management criteria'
+      : 'Standard sales criteria'
+
     // Step 1: Create job profile
     const { data: jobProfile, error: jobError } = await supabaseAdmin
       .from('job_profiles')
@@ -21,8 +30,8 @@ export async function POST(request: Request) {
         title: role,
         location: 'Remote',
         level_band: level.toLowerCase() as 'junior' | 'mid' | 'senior',
-        track: 'sales',
-        role_success_criteria: 'Standard sales criteria',
+        track: trackValue,
+        role_success_criteria: successCriteria,
         must_have_flags: [],
         disqualifiers: [],
         gating_thresholds: { proceed: 70, caution: 50, stop: 30 }
@@ -63,56 +72,14 @@ export async function POST(request: Request) {
 
     if (sessionError) throw sessionError
 
-    // Define rounds for Sales role (stored in scope package)
-    const salesRounds = [
-      {
-        round_number: 1,
-        round_type: 'voice' as const,
-        title: 'Round 1: Live Persona Sell',
-        prompt: 'Conduct a discovery call with a prospect. Ask at least 5 discovery questions, quantify value, and handle objections professionally.',
-        duration_minutes: 12,
-        status: 'pending' as const,
-        config: {
-          persona: 'skeptical_buyer',
-          required_questions: 5,
-          required_objections: 3,
-          curveballs: ['budget_cut', 'security_concern', 'timeline_mismatch']
-        }
-      },
-      {
-        round_number: 2,
-        round_type: 'email' as const,
-        title: 'Round 2: Negotiation via Email Thread',
-        prompt: 'Respond to the prospect\'s email objections. Maintain professional tone, protect margins, and demonstrate strong negotiation posture.',
-        duration_minutes: 15,
-        status: 'pending' as const,
-        config: {
-          thread_depth: 2,
-          initial_objection: 'discount_request',
-          escalation_objection: 'timeline_pressure'
-        }
-      },
-      {
-        round_number: 3,
-        round_type: 'text' as const,
-        title: 'Round 3: Follow-up Discipline',
-        prompt: 'Write an internal handoff note summarizing the deal status, key commitments, and next steps for the account team.',
-        duration_minutes: 5,
-        status: 'pending' as const,
-        config: {
-          optional: true
-        }
-      }
-    ]
-
     // Step 4: Create scope package with round plan
     const { data: scopePackage, error: scopeError } = await supabaseAdmin
       .from('interview_scope_packages')
       .insert({
         session_id: session.id,
         generated_at: new Date().toISOString(),
-        track: 'sales',
-        round_plan: salesRounds,
+        track: trackValue,
+        round_plan: rounds,
         question_set: {},
         simulation_payloads: {},
         rubric_version: '1.0',
@@ -131,7 +98,7 @@ export async function POST(request: Request) {
       payload: {
         candidate_id: candidate.id,
         job_id: jobProfile.id,
-        track: 'sales'
+        track: trackValue
       }
     })
 
@@ -143,7 +110,7 @@ export async function POST(request: Request) {
         currentRound: 1
       },
       scopePackage,
-      rounds: salesRounds
+      rounds
     })
   } catch (error: any) {
     console.error('Session creation error:', error)

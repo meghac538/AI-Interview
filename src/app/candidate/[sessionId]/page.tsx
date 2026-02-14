@@ -5,13 +5,14 @@ import { useParams, useRouter } from 'next/navigation'
 import { SessionProvider, useSession } from '@/contexts/SessionContext'
 import { TaskSurface } from '@/components/TaskSurface'
 import { SidekickPanel } from '@/components/SidekickPanel'
-import { AlarmClock, TimerReset, ChevronRight, Sparkles } from 'lucide-react'
+import { AlarmClock, ChevronRight, Sparkles } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 
 function CandidateView() {
-  const { session, rounds, currentRound, loading } = useSession()
+  const { session, rounds, currentRound, scopePackage, loading } = useSession()
   const [timeLeft, setTimeLeft] = useState(0)
   const [endAt, setEndAt] = useState<number | null>(null)
   const autoSubmitFired = useRef(false)
@@ -80,7 +81,7 @@ function CandidateView() {
     const timer = setInterval(tick, 1000)
 
     return () => clearInterval(timer)
-  }, [endAt, currentRound?.id])
+  }, [endAt, currentRound?.round_number])
 
   const handleAutoSubmit = async () => {
     if (!currentRound || !session) return
@@ -166,9 +167,12 @@ function CandidateView() {
     return `${mins}:${secs.toString().padStart(2, '0')}`
   }
 
+  const track = scopePackage?.track || 'sales'
+
   const formatRoundType = (roundType?: string) => {
     if (!roundType) return 'ROUND'
     if (roundType === 'voice') return 'LIVE CONVERSATION'
+    if (roundType === 'multi_channel') return 'MULTI-CHANNEL'
     return roundType.toUpperCase()
   }
 
@@ -182,58 +186,43 @@ function CandidateView() {
       <div className="mx-auto grid w-full max-w-6xl gap-6 lg:grid-cols-[2fr,1fr]">
         <section className="space-y-6">
           {/* Header */}
-          <header className="rounded-3xl border border-ink-100 bg-white/90 px-6 py-5 shadow-panel backdrop-blur">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div className="space-y-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-full border border-ink-200 bg-ink-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-500">
-                    Live Interview
-                  </span>
-                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-600">
-                    {session.status}
-                  </span>
+          <header className="rounded-3xl border border-ink-100 bg-white/90 px-6 py-4 shadow-panel backdrop-blur">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2.5">
+                  <h1 className="font-display text-xl text-ink-900">{jobTitle}</h1>
+                  <Badge tone="sky">{session.status}</Badge>
                 </div>
-                <h1 className="font-display text-2xl text-ink-900">{jobTitle}</h1>
-                <p className="text-sm text-ink-500">
+                <p className="mt-0.5 text-xs text-ink-400">
                   {candidateName} • Level {jobLevel}
                 </p>
               </div>
-              <div className="flex items-center gap-3 rounded-2xl border border-ink-100 bg-white px-4 py-3 text-sm shadow-sm">
+              <div className="flex items-center gap-2 text-sm">
                 <AlarmClock className="h-4 w-4 text-skywash-600" />
-                <span className="font-semibold text-lg">{formatTime(timeLeft)}</span>
-                <span className="text-ink-500">remaining</span>
+                <span className="font-semibold tabular-nums text-lg text-ink-900">{formatTime(timeLeft)}</span>
               </div>
             </div>
-            <div className="mt-4 flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-2 text-xs text-ink-500">
-                <TimerReset className="h-4 w-4 text-ink-500" />
-                <span>Round {currentRoundNumber} of {rounds.length}</span>
-              </div>
-              <Progress value={progress} className="flex-1" />
-              <span className="rounded-full border border-ink-200 bg-ink-50 px-3 py-1 text-xs text-ink-600">
-                {formatRoundType(currentRound.round_type)} • {currentRound.duration_minutes} min
+            <div className="mt-3 flex items-center gap-3">
+              <span className="text-[11px] text-ink-400 shrink-0">
+                Round {currentRoundNumber}/{rounds.length}
               </span>
+              <Progress value={progress} className="flex-1" />
             </div>
           </header>
 
           {/* Task Surface */}
           <Card className="animate-rise-in border-ink-100 bg-white/90 shadow-panel">
-            <CardContent className="space-y-6 pt-6">
-              <div className="flex items-start justify-between gap-4">
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-ink-500">
-                    <Sparkles className="h-4 w-4 text-skywash-600" />
-                    Round Brief
-                  </div>
-                  <h2 className="font-display text-xl text-ink-900">{currentRound.title}</h2>
-                  <p className="text-sm text-ink-500">{currentRound.prompt}</p>
+            <CardContent className="space-y-6">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-ink-400">
+                  <Sparkles className="h-3.5 w-3.5 text-skywash-500" />
+                  Round Brief
                 </div>
-                <div className="hidden min-w-[160px] rounded-2xl border border-ink-100 bg-ink-50/60 px-4 py-3 text-xs text-ink-600 lg:block">
-                  Stay focused on constraints and keep responses crisp. The interviewer is monitoring live.
-                </div>
+                <h2 className="font-display text-xl text-ink-900">{currentRound.title}</h2>
+                <p className="text-sm leading-relaxed text-ink-500">{currentRound.prompt}</p>
               </div>
               <TaskSurface round={currentRound} />
-              <div className="flex flex-wrap gap-3">
+              <div className="flex items-center justify-between">
                 <Button
                   size="sm"
                   onClick={handleSubmit}
@@ -242,40 +231,32 @@ function CandidateView() {
                   Submit & Next
                   <ChevronRight className="ml-1 h-4 w-4" />
                 </Button>
+                <span className="text-[11px] text-ink-400">
+                  Auto-submits when timer expires
+                </span>
               </div>
-              <p className="text-xs text-ink-500">
-                Responses are evaluated live. Auto-submit occurs if the timer reaches zero.
-              </p>
             </CardContent>
           </Card>
         </section>
 
         {/* Sidebar */}
         <aside className="space-y-6">
-          <SidekickPanel role={jobTitle} />
+          <SidekickPanel role={jobTitle} track={track} />
 
           {/* Session Status */}
           <Card className="border-ink-100 bg-white/90 shadow-panel">
-            <CardContent className="space-y-3 pt-6">
-              <div className="flex items-center justify-between text-sm">
+            <CardContent className="divide-y divide-ink-100/60">
+              <div className="flex items-center justify-between py-2.5 text-sm">
                 <span className="text-ink-600">Session Status</span>
                 <span className="font-semibold capitalize">{session.status}</span>
               </div>
-              <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center justify-between py-2.5 text-sm">
                 <span className="text-ink-600">Round Type</span>
                 <span className="text-ink-500 uppercase">{formatRoundType(currentRound.round_type)}</span>
               </div>
-              <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center justify-between py-2.5 text-sm">
                 <span className="text-ink-600">Duration</span>
                 <span className="text-ink-500">{currentRound.duration_minutes} min</span>
-              </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-ink-600">Auto-save</span>
-                <span className="text-ink-500">Every 30 seconds</span>
-              </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-ink-600">Audit Log</span>
-                <span className="text-ink-500">Enabled</span>
               </div>
             </CardContent>
           </Card>

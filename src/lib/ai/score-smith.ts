@@ -1,6 +1,4 @@
 import OpenAI from 'openai'
-import { supabaseAdmin } from '@/lib/supabase/server'
-
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 })
@@ -65,6 +63,110 @@ export const STANDARD_DIMENSIONS: ScoringDimension[] = [
   }
 ]
 
+export const IMPLEMENTATION_R1_DIMENSIONS: ScoringDimension[] = [
+  {
+    name: 'tone_and_clarity',
+    description: 'Calm, professional, empathetic tone with clear structure',
+    maxScore: 25,
+    scoringCriteria: [
+      'Acknowledges the client concern without being dismissive or defensive',
+      'Uses clear, structured language free of jargon or ambiguity',
+      'Maintains professional warmth while being direct'
+    ]
+  },
+  {
+    name: 'de_escalation',
+    description: 'Effective de-escalation without minimizing the issue',
+    maxScore: 25,
+    scoringCriteria: [
+      'Validates the concern as legitimate',
+      'Does not blame the customer or external factors',
+      'Reduces emotional temperature while maintaining seriousness',
+      'Avoids defensive posturing or corporate deflection'
+    ]
+  },
+  {
+    name: 'commitment_accuracy',
+    description: 'Realistic, specific commitments that avoid overreach',
+    maxScore: 25,
+    scoringCriteria: [
+      'Makes commitments that are realistically achievable',
+      'Does not promise outcomes outside their control',
+      'Avoids legal overreach or contractual language',
+      'Distinguishes between what is confirmed vs. what needs investigation'
+    ]
+  },
+  {
+    name: 'next_step_structure',
+    description: 'Clear, actionable next steps with owners and timeline',
+    maxScore: 25,
+    scoringCriteria: [
+      'Provides specific next steps, not vague reassurances',
+      'Includes timeline for each action item',
+      'Assigns ownership (self or team) for each step',
+      'Proposes a follow-up checkpoint or cadence'
+    ]
+  }
+]
+
+export const IMPLEMENTATION_R2_DIMENSIONS: ScoringDimension[] = [
+  {
+    name: 'internal_coordination',
+    description: 'Quality of internal team interaction and information gathering',
+    maxScore: 25,
+    scoringCriteria: [
+      'Asks targeted questions to the right internal stakeholders',
+      'Synthesizes conflicting or partial information effectively',
+      'Does not accept internal answers at face value without verification',
+      'Manages internal team efficiently (not too many or too few questions)'
+    ]
+  },
+  {
+    name: 'technical_comprehension',
+    description: 'Accuracy in understanding and relaying technical details',
+    maxScore: 25,
+    scoringCriteria: [
+      'Correctly interprets technical information from internal agents',
+      'Does not introduce inaccuracies when translating for the customer',
+      'Identifies gaps in technical answers that need follow-up',
+      'Distinguishes between current capabilities and roadmap items'
+    ]
+  },
+  {
+    name: 'customer_communication_quality',
+    description: 'Quality and accuracy of the final customer response',
+    maxScore: 25,
+    scoringCriteria: [
+      'Addresses all customer questions with specific answers',
+      'Sets realistic expectations based on verified information',
+      'Professional tone appropriate for a technical audience',
+      'Organizes information clearly (numbered responses matching questions)'
+    ]
+  },
+  {
+    name: 'risk_identification',
+    description: 'Proactive identification and communication of risks',
+    maxScore: 25,
+    scoringCriteria: [
+      'Identifies discrepancies between customer expectations and reality',
+      'Flags risks that the customer did not explicitly ask about',
+      'Proposes mitigation strategies alongside risk identification',
+      'Does not hide bad news or risks from the customer'
+    ]
+  }
+]
+
+export function getDimensionsForRound(track: string, roundNumber: number): ScoringDimension[] {
+  if (track === 'implementation') {
+    switch (roundNumber) {
+      case 1: return IMPLEMENTATION_R1_DIMENSIONS
+      case 2: return IMPLEMENTATION_R2_DIMENSIONS
+      default: return STANDARD_DIMENSIONS
+    }
+  }
+  return STANDARD_DIMENSIONS
+}
+
 export interface TruthLogEntry {
   claim: string
   evidence: string
@@ -128,7 +230,7 @@ export async function scoreArtifact(
   for (const dimension of dimensions) {
     const prompt = `You are ScoreSmith, an evidence-based interview scoring system.
 
-Task: Score the following sales interaction on the dimension "${dimension.name}".
+Task: Score the following interview response on the dimension "${dimension.name}".
 
 Dimension: ${dimension.name}
 Description: ${dimension.description}
@@ -170,9 +272,6 @@ If you cannot provide evidence, return score 0 and an empty evidence array.`
 
       const result = JSON.parse(completion.choices[0].message.content || '{}')
 
-      // Check for red flags
-      await detectRedFlags(sessionId, roundId, dimension.name, result, artifactContent)
-
       const evidence = Array.isArray(result.evidence) ? result.evidence : []
       const hasEvidence = evidence.length > 0
 
@@ -197,63 +296,3 @@ If you cannot provide evidence, return score 0 and an empty evidence array.`
   return results
 }
 
-async function detectRedFlags(
-  sessionId: string,
-  roundId: string,
-  dimension: string,
-  scoringResult: any,
-  content: string
-) {
-  const evidence = Array.isArray(scoringResult?.evidence) ? scoringResult.evidence : []
-  if (evidence.length === 0) {
-    return
-  }
-
-  // Check for overpromising (honesty dimension)
-  if (dimension === 'reliability' && scoringResult.score < 8) {
-    await supabaseAdmin.from('red_flags').insert({
-      session_id: sessionId,
-      round_id: roundId,
-      flag_type: 'overpromising',
-      severity: 'critical',
-      description: 'Candidate may have overpromised or made false claims',
-      evidence
-    })
-  }
-
-  // Check for poor objection handling
-  if (dimension === 'communication' && scoringResult.score < 8) {
-    await supabaseAdmin.from('red_flags').insert({
-      session_id: sessionId,
-      round_id: roundId,
-      flag_type: 'conflict_escalation',
-      severity: 'high',
-      description: 'Communication suggests escalation risk or poor conflict handling',
-      evidence
-    })
-  }
-
-  // Check for lack of verification discipline
-  if (dimension === 'verification' && scoringResult.score < 10) {
-    await supabaseAdmin.from('red_flags').insert({
-      session_id: sessionId,
-      round_id: roundId,
-      flag_type: 'overconfident_without_verification',
-      severity: 'critical',
-      description: 'Overconfident claims without a verification plan',
-      evidence
-    })
-  }
-
-  // Check for unsafe data handling hints
-  if (dimension === 'role_depth' && scoringResult.score < 15) {
-    await supabaseAdmin.from('red_flags').insert({
-      session_id: sessionId,
-      round_id: roundId,
-      flag_type: 'unsafe_data_handling',
-      severity: 'critical',
-      description: 'Potential unsafe handling of sensitive data or security gaps',
-      evidence
-    })
-  }
-}

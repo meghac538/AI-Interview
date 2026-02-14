@@ -2,6 +2,7 @@ import { AlertTriangle, CheckCircle2, Slash } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 
 export interface GatePanelProps {
@@ -35,13 +36,13 @@ export function GatePanel({
 
   return (
     <Card className="bg-white/90">
-      <CardHeader className="space-y-2">
+      <CardHeader className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-ink-900">Gate Panel</h2>
           <Badge tone="sky">Live scoring</Badge>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="text-3xl font-semibold text-ink-900">{resolved.overall}</div>
+        <div className="flex items-baseline gap-3">
+          <div className="text-4xl font-display font-semibold text-ink-900">{resolved.overall}</div>
           <div className="text-sm text-ink-500">Overall score</div>
         </div>
         <div className="space-y-1">
@@ -53,22 +54,26 @@ export function GatePanel({
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
+        <div className="h-px bg-ink-100" />
+
         <div className="space-y-3">
           {resolved.dimensions.map((dimension) => (
             <div key={dimension.label} className="space-y-1">
-              <div className="flex items-center justify-between text-sm">
-                <span>{dimension.label}</span>
-                <span className="font-semibold">{dimension.score}</span>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-ink-600">{dimension.label}</span>
+                <span className="font-semibold text-ink-900">{dimension.score}</span>
               </div>
               <Progress value={(dimension.score / (dimension.max || 30)) * 100} />
             </div>
           ))}
         </div>
 
+        <div className="h-px bg-ink-100" />
+
         <div className="space-y-3">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-ink-500">Red Flags</p>
           {resolved.redFlags.length === 0 && (
-            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+            <div className="rounded-2xl bg-ink-50/60 px-4 py-3 text-xs text-ink-500">
               No red flags detected.
             </div>
           )}
@@ -97,14 +102,13 @@ export function GatePanel({
               </li>
             ))}
             {resolved.followups.length === 0 && (
-              <li className="rounded-2xl bg-ink-50 px-3 py-2 text-ink-500">No follow-ups suggested.</li>
+              <li className="rounded-2xl bg-ink-50 px-3 py-2 text-xs text-ink-500">No follow-ups suggested.</li>
             )}
           </ul>
           {onAddFollowup && (
             <div className="flex items-center gap-2">
-              <input
-                type="text"
-                className="flex-1 rounded-2xl border border-ink-100 bg-white px-3 py-2 text-sm text-ink-700"
+              <Input
+                className="flex-1"
                 placeholder="Add a follow-up question..."
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
@@ -133,7 +137,9 @@ export function GatePanel({
           )}
         </div>
 
-        <div className="grid grid-cols-3 gap-2">
+        <div className="h-px bg-ink-100" />
+
+        <div className="grid grid-cols-3 gap-2 pt-1">
           <Button variant="outline" size="sm" onClick={() => onAction?.("escalate")}>
             Escalate difficulty
           </Button>

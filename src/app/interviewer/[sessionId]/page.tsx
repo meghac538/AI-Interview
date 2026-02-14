@@ -4,6 +4,7 @@ import { useMemo } from 'react'
 import { useParams } from 'next/navigation'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
+import { Textarea } from '@/components/ui/textarea'
 import { GatePanel } from '@/components/GatePanel'
 import { SessionProvider, useSession } from '@/contexts/SessionContext'
 
@@ -298,11 +299,8 @@ function InterviewerView() {
           </Card>
 
           <Card className="animate-rise-in bg-white/90">
-            <CardHeader className="space-y-2">
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold">Live Transcript</h2>
-                <Badge tone="sky">Monitoring</Badge>
-              </div>
+            <CardHeader className="space-y-1">
+              <h2 className="text-lg font-semibold">Live Transcript</h2>
               <p className="text-sm text-ink-500">
                 Real-time conversation and candidate responses.
               </p>
@@ -355,7 +353,7 @@ function InterviewerView() {
                         : `Duration: ${round.durationMinutes} min`}
                     </div>
                   </div>
-                  <Badge tone={round.status === 'active' ? 'sky' : round.status === 'completed' ? 'emerald' : 'ink'}>
+                  <Badge tone={round.status === 'active' ? 'sky' : round.status === 'completed' ? 'signal' : 'neutral'}>
                     {round.status}
                   </Badge>
                 </div>
@@ -406,9 +404,8 @@ function InterviewerView() {
               <h3 className="text-base font-semibold">Interviewer Notes</h3>
             </CardHeader>
             <CardContent>
-              <textarea
+              <Textarea
                 rows={6}
-                className="w-full rounded-2xl border border-ink-100 bg-white px-4 py-3 text-sm"
                 placeholder="Capture context for the final recommendation..."
               />
             </CardContent>

@@ -21,7 +21,7 @@ const highlights = [
 export default function HomePage() {
   return (
     <main className="min-h-screen px-6 py-12">
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-10">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-14">
         <header className="flex flex-col gap-6">
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-2xl bg-skywash-600 shadow-aura" />
@@ -33,7 +33,7 @@ export default function HomePage() {
             <h1 className="font-display text-4xl text-ink-900 md:text-5xl">
               Governed by AI scoring and human control.
             </h1>
-            <p className="text-base text-ink-600 md:text-lg">
+            <p className="text-base leading-relaxed text-ink-600 md:text-lg">
               Built for deterministic, auditable interviews with agent-based rounds and live gate decisions.
               Candidates progress through structured tasks while interviewers monitor evidence-backed scores.
             </p>
@@ -54,8 +54,8 @@ export default function HomePage() {
         </header>
 
         <section className="grid gap-6 md:grid-cols-2">
-          {highlights.map((item) => (
-            <Card key={item.title} className="animate-rise-in">
+          {highlights.map((item, index) => (
+            <Card key={item.title} className="animate-rise-in" style={{ animationDelay: `${index * 0.15}s` }}>
               <CardHeader>
                 <div className="flex items-center gap-3">
                   <item.icon className="h-6 w-6 text-skywash-700" />

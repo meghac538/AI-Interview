@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import { supabaseAdmin } from '@/lib/supabase/server'
-import { SALES_SIDEKICK_POLICY, enforceSidekickPolicy } from '@/lib/ai/sidekick-policy'
+import { getSidekickPolicy, enforceSidekickPolicy } from '@/lib/ai/sidekick-policy'
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
@@ -18,6 +18,16 @@ export async function POST(request: Request) {
       )
     }
 
+    // Look up the track from the scope package
+    const { data: scopePackage } = await supabaseAdmin
+      .from('interview_scope_packages')
+      .select('track')
+      .eq('session_id', session_id)
+      .single()
+
+    const track = scopePackage?.track || 'sales'
+    const policy = getSidekickPolicy(track)
+
     // Check query limit (count from live_events)
     const { data: logs } = await supabaseAdmin
       .from('live_events')
@@ -25,21 +35,21 @@ export async function POST(request: Request) {
       .eq('session_id', session_id)
       .eq('event_type', 'sidekick_query')
 
-    if (logs && logs.length >= SALES_SIDEKICK_POLICY.maxQueries) {
+    if (logs && logs.length >= policy.maxQueries) {
       return NextResponse.json({
-        response: `You've reached your Sidekick query limit (${SALES_SIDEKICK_POLICY.maxQueries} queries). Complete the round with your best judgment.`,
+        response: `You've reached your Sidekick query limit (${policy.maxQueries} queries). Complete the round with your best judgment.`,
         limit_reached: true,
         remaining_queries: 0
       })
     }
 
     // Enforce policy
-    const policyCheck = enforceSidekickPolicy(query, SALES_SIDEKICK_POLICY)
+    const policyCheck = enforceSidekickPolicy(query, policy)
     if (!policyCheck.allowed) {
       return NextResponse.json({
         response: policyCheck.reason,
         policy_violation: true,
-        remaining_queries: SALES_SIDEKICK_POLICY.maxQueries - (logs?.length || 0)
+        remaining_queries: policy.maxQueries - (logs?.length || 0)
       })
     }
 
@@ -47,7 +57,7 @@ export async function POST(request: Request) {
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [
-        { role: 'system', content: SALES_SIDEKICK_POLICY.systemPrompt },
+        { role: 'system', content: policy.systemPrompt },
         ...(history || []),
         { role: 'user', content: query }
       ],
@@ -57,7 +67,7 @@ export async function POST(request: Request) {
 
     const response = completion.choices[0].message.content || ''
 
-    // Log sidekick usage to live_events (MVP approach)
+    // Log sidekick usage to live_events
     await supabaseAdmin.from('live_events').insert({
       session_id,
       event_type: 'sidekick_query',
@@ -68,17 +78,18 @@ export async function POST(request: Request) {
         query_length: query.length,
         response_length: response.length,
         tokens_used: completion.usage?.total_tokens || 0,
+        track,
         policy_enforced: {
-          permissions: SALES_SIDEKICK_POLICY.permissions,
-          restrictions: SALES_SIDEKICK_POLICY.restrictions
+          permissions: policy.permissions,
+          restrictions: policy.restrictions
         }
       }
     })
 
     return NextResponse.json({
       response,
-      policy: SALES_SIDEKICK_POLICY,
-      remaining_queries: SALES_SIDEKICK_POLICY.maxQueries - (logs?.length || 0) - 1
+      policy,
+      remaining_queries: policy.maxQueries - (logs?.length || 0) - 1
     })
   } catch (error: any) {
     console.error('Sidekick error:', error)
