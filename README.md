@@ -12,6 +12,8 @@ Live interview platform with AI-assisted evaluation and real-time monitoring for
 - **Evidence-based Scoring** - AI-powered evaluation with quote extraction
 - **Red Flag Detection** - Automatic and manual flagging with auto-stop for critical issues
 - **Adaptive Difficulty** - Round difficulty adjusts based on candidate performance
+- **Live Curveball Injection** - Track-aware constraints injected mid-round with AI contextualization
+- **Persona Switching** - Dynamic AI persona changes during conversational rounds
 - **Audit Trail** - Complete immutable event log
 
 ## Tech Stack
@@ -148,6 +150,65 @@ src/
 
 **AI Assistant** is policy-governed with server-side enforcement
 
+## Curveball & Persona System
+
+The interviewer can inject constraints and switch AI personas in real-time during a session via the Live Controls panel on the interviewer dashboard.
+
+### Curveballs
+
+Curveballs are mid-round constraints that force the candidate to adapt. They are defined in `src/lib/constants/curveball-library.ts` and filtered by track.
+
+| Track | Example Curveballs |
+|-------|-------------------|
+| Sales | Budget cut, competitor pressure, CFO pushback, security concern |
+| Implementation | Scope creep, data migration failure, team resource loss, client escalation |
+| Engineering | Production incident, dependency vulnerability, performance regression |
+| Universal | Stakeholder change (applies to all tracks) |
+
+**How curveballs work by round type:**
+
+- **Conversational rounds** (voice, email, agentic) — The AI incorporates the curveball into its next response naturally. The candidate doesn't see the raw curveball text.
+- **Non-conversational rounds** (text, code, mcq) — The curveball appears as a "Scenario Update" card on the candidate's screen. Library curveballs are rewritten by AI to match the round's specific prompt context.
+
+**Custom curveballs** — The interviewer can type free-text constraints instead of picking from the library. Custom text is displayed as-is (no AI rewriting).
+
+### Personas
+
+Personas control the AI's personality and behavior during conversational rounds. They are defined alongside curveballs in the library and filtered by track.
+
+| Track | Available Personas |
+|-------|-------------------|
+| Sales | Skeptical buyer, CFO (budget-focused), security lead, champion |
+| Implementation | Anxious client, technical stakeholder, executive sponsor, resistant user |
+| Engineering | Senior reviewer, product manager, security auditor, ops engineer |
+
+**Custom personas** — The interviewer can type a free-text persona description for full control over the AI's behavior.
+
+Persona controls are hidden for non-conversational rounds (text, code, mcq) since there is no AI conversation to apply them to.
+
+### Data Flow
+
+```
+Interviewer injects curveball/persona via dashboard
+  → POST /api/interviewer/action
+  → Updates round_plan in interview_scope_packages (Supabase)
+  → Emits live_event for audit trail
+  → For non-conv rounds: curveball appears on candidate screen via realtime subscription
+  → For conv rounds: AI reads controls on next response via readInterviewerControls()
+  → Consumption feedback shown on interviewer dashboard (Used/Pending badges)
+```
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/lib/constants/curveball-library.ts` | Curveball and persona definitions, track filtering helpers |
+| `src/lib/ai/interviewer-controls.ts` | Shared utility to read all interviewer controls from DB |
+| `src/app/api/interviewer/action/route.ts` | Action handler for inject, switch, escalate |
+| `src/app/api/ai/prospect/route.ts` | AI conversation endpoint that consumes controls |
+| `src/components/TaskSurface.tsx` | Candidate-facing curveball display (Scenario Update cards) |
+| `src/components/VoiceControlPanel.tsx` | Voice-specific live controls |
+
 ## API Reference
 
 ```http
@@ -167,7 +228,7 @@ POST /api/followup/generate       # Generate follow-up questions
 GET  /api/followup/pending        # Get pending follow-ups
 GET  /api/followup/thread         # Get follow-up thread
 
-POST /api/interviewer/action      # Interviewer actions (flag, advance, stop)
+POST /api/interviewer/action      # Interviewer actions (curveball, persona, flag, advance, stop)
 GET  /api/interviewer/sessions    # List interviewer sessions
 
 GET  /api/blueprints              # List assessment blueprints

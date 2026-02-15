@@ -13,9 +13,7 @@ import {
   FileText,
   Link2,
   Loader2,
-  ShieldAlert,
-  Sparkles,
-  Wand2
+  ShieldAlert
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -32,6 +30,7 @@ import { Progress } from '@/components/ui/progress'
 import type { RedFlagEntry } from '@/components/GatePanel'
 import { RED_FLAG_TYPES } from '@/lib/constants/red-flags'
 import type { RedFlagTypeKey } from '@/lib/constants/red-flags'
+import { getCurveballsForTrack, getPersonasForTrack, getCurveballByKey, getPersonaDisplayName } from '@/lib/constants/curveball-library'
 import { VoiceControlPanel } from '@/components/VoiceControlPanel'
 import { AIAssessmentsPanel } from '@/components/AIAssessmentsPanel'
 import { useVoiceAnalysis } from '@/hooks/useVoiceAnalysis'
@@ -391,7 +390,9 @@ function buildActionLog(events: any[]) {
     'difficulty_adaptation',
     'red_flag_detected',
     'auto_stop_triggered',
-    'session_force_stopped'
+    'session_force_stopped',
+    'curveball_used',
+    'persona_used'
   ])
 
   for (const event of events || []) {
@@ -430,6 +431,12 @@ function buildActionLog(events: any[]) {
       if (event.event_type === 'session_force_stopped') {
         return event.payload?.reason || 'Session force stopped'
       }
+      if (event.event_type === 'curveball_used') {
+        return `AI consumed curveball: ${event.payload?.curveball || 'unknown'}`
+      }
+      if (event.event_type === 'persona_used') {
+        return `AI applied persona: ${event.payload?.persona || 'unknown'}`
+      }
       if (event.event_type === 'round_started' || event.event_type === 'round_completed') {
         return undefined
       }
@@ -458,7 +465,11 @@ function buildActionLog(events: any[]) {
                   ? 'Auto-stop triggered'
                   : event.event_type === 'session_force_stopped'
                     ? 'Session force stopped'
-                    : event.event_type.replace(/_/g, ' ')
+                    : event.event_type === 'curveball_used'
+                      ? 'Curveball consumed'
+                      : event.event_type === 'persona_used'
+                        ? 'Persona applied'
+                        : event.event_type.replace(/_/g, ' ')
 
     actions.push({
       action: label,
@@ -522,8 +533,10 @@ function InterviewerView() {
   const [showFollowups, setShowFollowups] = useState(false)
   const [showControls, setShowControls] = useState(true)
   const [sendingAction, setSendingAction] = useState<string | null>(null)
-  const [curveball, setCurveball] = useState('budget_cut')
-  const [persona, setPersona] = useState('skeptical')
+  const [curveball, setCurveball] = useState('')
+  const [customCurveball, setCustomCurveball] = useState('')
+  const [persona, setPersona] = useState('')
+  const [customPersona, setCustomPersona] = useState('')
   const [escalationLevel, setEscalationLevel] = useState('L3')
   const [flagType, setFlagType] = useState<string>('custom')
   const [flagDescription, setFlagDescription] = useState('')
@@ -583,6 +596,7 @@ function InterviewerView() {
       const endsAt = startedAt ? new Date(startedAt.getTime() + durationMs) : null
       return {
         round_number: round.round_number,
+        round_type: round.round_type,
         title: round.title,
         status: round.status || 'pending',
         startedAt,
@@ -1011,18 +1025,41 @@ function InterviewerView() {
     })
   }
 
-  const injectCurveball = async (curveball: string) => {
+  const injectCurveball = async (curveballKey: string) => {
     await sendAction('inject_curveball', {
-      curveball,
-      target_round: null
+      curveball: curveballKey,
+      curveball_key: curveballKey,
+      target_round: null,
     })
   }
 
-  const switchPersona = async (persona: string) => {
-    await sendAction('switch_persona', {
-      persona,
-      target_round: null
+  const injectCustomCurveball = async (text: string) => {
+    if (!text.trim()) return
+    await sendAction('inject_curveball', {
+      curveball_key: 'custom',
+      custom_text: text.trim(),
+      target_round: null,
     })
+    setCustomCurveball('')
+  }
+
+  const switchPersona = async (personaKey: string) => {
+    await sendAction('switch_persona', {
+      persona: personaKey,
+      target_round: null,
+      track: roleTrack,
+    })
+  }
+
+  const switchCustomPersona = async (text: string) => {
+    if (!text.trim()) return
+    await sendAction('switch_persona', {
+      persona: 'custom',
+      custom_text: text.trim(),
+      target_round: null,
+      track: roleTrack,
+    })
+    setCustomPersona('')
   }
 
   const copyMagicLink = async () => {
@@ -1164,15 +1201,7 @@ function InterviewerView() {
                   )}
                   Send Candidate Link
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => sendAction('inject_curveball')} disabled={!!sendingAction}>
-                  {sendingAction === 'inject_curveball' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                  Inject Curveball
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => sendAction('switch_persona')} disabled={!!sendingAction}>
-                  {sendingAction === 'switch_persona' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
-                  Switch Persona
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => sendAction('end_round')} disabled={!!sendingAction}>
+<Button size="sm" variant="outline" onClick={() => sendAction('end_round')} disabled={!!sendingAction}>
                   {sendingAction === 'end_round' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Clock3 className="h-4 w-4" />}
                   End Round
                 </Button>
@@ -1370,6 +1399,7 @@ function InterviewerView() {
               <VoiceControlPanel
                 sessionId={session.id}
                 isCallActive={isCallInProgress}
+                track={roleTrack}
               />
               <AIAssessmentsPanel sessionId={session.id} />
 
@@ -1519,6 +1549,218 @@ function InterviewerView() {
             </CardHeader>
             {showControls && (
               <CardContent className="space-y-4">
+                {/* Curveball + Persona + Difficulty */}
+                <div className="grid gap-4 rounded-lg border p-4">
+                  <div className="grid gap-4">
+                    {/* Track-aware curveball dropdown */}
+                    <div className="space-y-2">
+                      <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        Curveball
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <Select value={curveball} onValueChange={setCurveball}>
+                          <SelectTrigger className="h-8">
+                            <SelectValue placeholder="Select curveball..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {getCurveballsForTrack(roleTrack).map((cb) => (
+                              <SelectItem key={cb.key} value={cb.key}>{cb.title}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button variant="outline" size="sm" disabled={!curveball || !!sendingAction} onClick={() => injectCurveball(curveball)}>
+                          Inject
+                        </Button>
+                      </div>
+                      {/* Custom curveball */}
+                      <div className="flex items-center gap-2">
+                        <Input
+                          className="h-8 text-xs"
+                          placeholder="Custom curveball text..."
+                          value={customCurveball}
+                          onChange={(e) => setCustomCurveball(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && customCurveball.trim()) {
+                              injectCustomCurveball(customCurveball)
+                            }
+                          }}
+                        />
+                        <Button variant="outline" size="sm" disabled={!customCurveball.trim() || !!sendingAction} onClick={() => injectCustomCurveball(customCurveball)}>
+                          Custom
+                        </Button>
+                      </div>
+                      {/* Consumption feedback */}
+                      {(() => {
+                        const injected = (events || []).filter((e: any) =>
+                          e.event_type === 'interviewer_action' &&
+                          e.payload?.action_type === 'inject_curveball' &&
+                          (e.payload?.curveball || e.payload?.curveball_key || e.payload?.custom_text)
+                        ).slice(0, 5)
+                        const consumed = new Set(
+                          (events || []).filter((e: any) => e.event_type === 'curveball_used')
+                            .map((e: any) => e.payload?.curveball).filter(Boolean)
+                        )
+                        if (injected.length === 0) return null
+                        return (
+                          <div className="space-y-1 mt-1">
+                            {injected.map((e: any, i: number) => {
+                              const key = e.payload?.curveball || e.payload?.curveball_key || 'custom'
+                              const isCustom = !!e.payload?.custom_text
+                              const label = isCustom
+                                ? (e.payload?.custom_text?.slice(0, 40) || 'Custom')
+                                : (getCurveballByKey(key)?.title || key)
+                              const isConsumed = consumed.has(key)
+                              return (
+                                <div key={e.id || i} className="flex items-center gap-1.5 text-[10px]">
+                                  {isConsumed ? (
+                                    <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                                  ) : (
+                                    <Clock3 className="h-3 w-3 text-amber-500" />
+                                  )}
+                                  <span className={isConsumed ? 'text-muted-foreground' : 'text-foreground'}>
+                                    {label.replace(/_/g, ' ')}
+                                  </span>
+                                  <Badge variant={isConsumed ? 'secondary' : 'outline'} className="h-4 px-1 text-[9px]">
+                                    {isConsumed ? 'Used' : 'Pending'}
+                                  </Badge>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )
+                      })()}
+                    </div>
+
+                    {/* Track-aware persona dropdown — only for conversational rounds */}
+                    <div className="space-y-2">
+                      <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        Persona
+                      </label>
+                      {activeRound && ['voice', 'voice-realtime', 'email', 'agentic'].includes(activeRound.round_type) ? (
+                        <>
+                          <div className="flex items-center gap-2">
+                            <Select value={persona} onValueChange={setPersona}>
+                              <SelectTrigger className="h-8">
+                                <SelectValue placeholder="Select persona..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {getPersonasForTrack(roleTrack).map((p) => (
+                                  <SelectItem key={p.key} value={p.key}>{p.label}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <Button variant="outline" size="sm" disabled={!persona || !!sendingAction} onClick={() => switchPersona(persona)}>
+                              Switch
+                            </Button>
+                          </div>
+                          {/* Custom persona */}
+                          <div className="flex items-center gap-2">
+                            <Input
+                              className="h-8 text-xs"
+                              placeholder="Custom persona description..."
+                              value={customPersona}
+                              onChange={(e) => setCustomPersona(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' && customPersona.trim()) {
+                                  switchCustomPersona(customPersona)
+                                }
+                              }}
+                            />
+                            <Button variant="outline" size="sm" disabled={!customPersona.trim() || !!sendingAction} onClick={() => switchCustomPersona(customPersona)}>
+                              Custom
+                            </Button>
+                          </div>
+                          {/* Persona consumption feedback */}
+                          {(() => {
+                            const switched = (events || []).filter((e: any) =>
+                              e.event_type === 'interviewer_action' &&
+                              e.payload?.action_type === 'switch_persona' &&
+                              (e.payload?.persona || e.payload?.custom_text)
+                            ).slice(0, 3)
+                            const used = new Set(
+                              (events || []).filter((e: any) => e.event_type === 'persona_used')
+                                .map((e: any) => e.payload?.persona).filter(Boolean)
+                            )
+                            if (switched.length === 0) return null
+                            return (
+                              <div className="space-y-1 mt-1">
+                                {switched.map((e: any, i: number) => {
+                                  const key = e.payload?.persona || ''
+                                  const isCustomPersona = !!e.payload?.custom_text
+                                  const isUsed = used.has(key) || (isCustomPersona && used.has('custom'))
+                                  const personaLabel = isCustomPersona
+                                    ? (e.payload?.custom_text?.slice(0, 40) || 'Custom')
+                                    : (getPersonaDisplayName(key) || key.replace(/_/g, ' ') || 'Unknown')
+                                  return (
+                                    <div key={e.id || i} className="flex items-center gap-1.5 text-[10px]">
+                                      {isUsed ? (
+                                        <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                                      ) : (
+                                        <Clock3 className="h-3 w-3 text-amber-500" />
+                                      )}
+                                      <span className={isUsed ? 'text-muted-foreground' : 'text-foreground'}>
+                                        {personaLabel}
+                                      </span>
+                                      <Badge variant={isUsed ? 'secondary' : 'outline'} className="h-4 px-1 text-[9px]">
+                                        {isUsed ? 'Applied' : 'Pending'}
+                                      </Badge>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            )
+                          })()}
+                        </>
+                      ) : (
+                        <p className="text-xs text-muted-foreground italic">
+                          Persona controls only apply to conversational rounds (voice, email, agentic). The current round is text-based.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        Difficulty
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <Select value={escalationLevel} onValueChange={setEscalationLevel}>
+                          <SelectTrigger className="h-8">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="L1">L1</SelectItem>
+                            <SelectItem value="L2">L2</SelectItem>
+                            <SelectItem value="L3">L3</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Button variant="outline" size="sm" disabled={!!sendingAction} onClick={() => escalateDifficulty(escalationLevel)}>
+                          Escalate
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        Round Control
+                      </label>
+                      <Button variant="outline" size="sm" className="w-full" disabled={!!sendingAction} onClick={endRound}>
+                        End round
+                      </Button>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        Gate Decision
+                      </label>
+                      <Button variant="secondary" size="sm" className="w-full" disabled={!!sendingAction} onClick={() => sendDecision('proceed')}>
+                        <CheckCircle2 className="mr-2 h-4 w-4" />
+                        Proceed
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Red Flag Section */}
                 <div className="space-y-3 rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/30 px-4 py-4">
                   <div className="text-xs font-semibold uppercase tracking-[0.16em] text-red-700 dark:text-red-400">
                     Flag Red Flag
@@ -1573,6 +1815,19 @@ function InterviewerView() {
                     {sendingAction === 'flag_red_flag' ? 'Flagging...' : 'Flag'}
                   </Button>
                 </div>
+
+                {/* Stop Interview */}
+                <div className="flex items-center justify-between rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3">
+                  <div>
+                    <p className="text-sm font-semibold text-destructive">Stop interview</p>
+                    <p className="text-xs text-destructive/80">Ends the session immediately.</p>
+                  </div>
+                  <Button variant="destructive" size="sm" disabled={!!sendingAction} onClick={() => sendDecision('stop')}>
+                    <Slash className="mr-2 h-4 w-4" />
+                    Stop
+                  </Button>
+                </div>
+                <p className="text-[11px] text-muted-foreground">Applies to next response</p>
               </CardContent>
             )}
           </Card>
