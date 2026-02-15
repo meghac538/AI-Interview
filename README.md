@@ -5,10 +5,13 @@ Live interview platform with AI-assisted evaluation and real-time monitoring for
 ## Features
 
 - **Live Interview Sessions** - Timed rounds with automatic progression
+- **Multi-format Rounds** - Voice, email, text, code, and multiple-choice assessments
 - **AI Prospect Interaction** - Text-based conversations with realistic personas
 - **AI Assistant** - Policy-governed help (outline guidance only, 6 queries max)
 - **Real-time Updates** - Instant sync across candidate/interviewer views
 - **Evidence-based Scoring** - AI-powered evaluation with quote extraction
+- **Red Flag Detection** - Automatic and manual flagging with auto-stop for critical issues
+- **Adaptive Difficulty** - Round difficulty adjusts based on candidate performance
 - **Audit Trail** - Complete immutable event log
 
 ## Tech Stack
@@ -45,7 +48,7 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 ### 3. Set Up Database
 
 1. Go to [Supabase SQL Editor](https://app.supabase.com)
-2. Copy and execute `supabase_mvp_schema.sql`
+2. Execute `database/production_schema_migration.sql`
 3. Enable Realtime replication for: `interview_sessions`, `interview_scope_packages`, `scores`, `live_events`
 
 ### 4. Run
@@ -76,8 +79,8 @@ Use the returned `session.id` to visit: `http://localhost:3000/candidate/{sessio
 
 ### Round 1: Live Persona Sell (12 min)
 Text chat with AI prospect Sarah Chen. Requirements:
-- Ask ≥5 discovery questions
-- Handle ≥3 objections
+- Ask discovery questions
+- Handle objections
 - Quantify value proposition
 - Professional closing
 
@@ -96,25 +99,33 @@ Internal handoff note (optional)
 ```
 src/
 ├── app/
-│   ├── api/              # API routes
-│   │   ├── session/      # Session CRUD
-│   │   ├── round/        # Round start/complete
-│   │   ├── artifact/     # Response submission
-│   │   └── ai/           # AI integrations
-│   ├── candidate/        # Candidate interview view
-│   ├── interviewer/      # Interviewer monitoring
-│   └── test/             # Session creation test page
+│   ├── api/
+│   │   ├── session/           # Session CRUD + termination
+│   │   ├── round/             # Round start/complete
+│   │   ├── artifact/          # Response submission
+│   │   ├── ai/                # AI chat + prospect interaction
+│   │   ├── followup/          # Follow-up generation, pending, threads
+│   │   ├── interviewer/       # Interviewer actions + session list
+│   │   ├── blueprints/        # Assessment blueprint CRUD
+│   │   └── question-factory/  # AI question generation
+│   ├── candidate/             # Candidate interview view
+│   ├── interviewer/           # Interviewer monitoring dashboard
+│   └── test/                  # Session creation test page
 ├── components/
-│   ├── rounds/           # Round-specific UIs
-│   ├── TaskSurface.tsx   # Main task display
-│   ├── SidekickPanel.tsx # AI assistant
-│   └── GatePanel.tsx     # Interviewer controls
-├── contexts/             # React Context
-├── hooks/                # Custom hooks
+│   ├── rounds/                # Round UIs (Voice, Email, Text, Code, MCQ)
+│   ├── ui/                    # Shared UI components (markdown)
+│   ├── TaskSurface.tsx        # Main task display
+│   ├── SidekickPanel.tsx      # AI assistant
+│   └── GatePanel.tsx          # Interviewer controls + red flags
+├── contexts/                  # React Context
+├── hooks/                     # Custom hooks (useRealtimeSession)
 └── lib/
-    ├── supabase/         # DB clients
-    ├── ai/               # AI policies
-    └── types/            # TypeScript types
+    ├── ai/                    # Scoring engine + question factory
+    ├── constants/             # Red flag types + shared constants
+    ├── db/                    # Shared DB helpers
+    ├── supabase/              # Supabase client config
+    ├── types/                 # TypeScript types
+    └── utils/                 # Round adapter + utilities
 ```
 
 ## Key Concepts
@@ -125,26 +136,44 @@ src/
 ```typescript
 {
   round_number: 1,
-  round_type: 'voice',  // or 'email', 'text'
+  round_type: 'voice',  // or 'email', 'text', 'code', 'mcq'
   title: 'Round 1: Live Persona Sell',
-  status: 'active',     // or 'pending', 'completed'
+  status: 'active',     // or 'pending', 'completed', 'skipped'
   duration_minutes: 12,
   config: { /* round-specific settings */ }
 }
 ```
 
-**Real-time** uses 5 Supabase channels for instant updates across views
+**Real-time** uses Supabase channels for instant updates across views
 
 **AI Assistant** is policy-governed with server-side enforcement
 
 ## API Reference
 
 ```http
-POST /api/session/create
-GET  /api/session/{id}
-POST /api/round/start
-POST /api/round/complete
-POST /api/artifact/submit
+POST /api/session/create          # Create new interview session
+GET  /api/session/{id}            # Get session details
+POST /api/session/{id}/terminate  # End session early
+
+POST /api/round/start             # Start a round
+POST /api/round/complete          # Complete a round (triggers scoring)
+
+POST /api/artifact/submit         # Submit candidate response
+
+POST /api/ai/chat                 # AI assistant interaction
+POST /api/ai/prospect             # AI prospect conversation
+
+POST /api/followup/generate       # Generate follow-up questions
+GET  /api/followup/pending        # Get pending follow-ups
+GET  /api/followup/thread         # Get follow-up thread
+
+POST /api/interviewer/action      # Interviewer actions (flag, advance, stop)
+GET  /api/interviewer/sessions    # List interviewer sessions
+
+GET  /api/blueprints              # List assessment blueprints
+GET  /api/blueprints/{id}         # Get blueprint details
+
+POST /api/question-factory/generate  # Generate questions from blueprints
 ```
 
 ## Troubleshooting
@@ -165,19 +194,15 @@ POST /api/artifact/submit
 
 ### Adding a Round Type
 
-1. Update type in `src/lib/types/database.ts`
+1. Add type to `RoundType` in `src/lib/types/database.ts`
 2. Create UI component in `src/components/rounds/`
 3. Register in `TaskSurface.tsx`
 4. Update session creation to include in round_plan
 
 ### Code Standards
 
-- Use TypeScript (no `any` types)
+- Use TypeScript with proper typing
 - Use "use client" for client components
 - Log important events to `live_events`
 - Test real-time updates in separate tabs
 - Always validate input in API routes
-
-## License
-
-MIT
