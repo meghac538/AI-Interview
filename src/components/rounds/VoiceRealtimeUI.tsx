@@ -119,10 +119,10 @@ export function VoiceRealtimeUI({ round }: { round: Round }) {
 
       {/* Error Display */}
       {error && (
-        <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3">
-          <p className="text-sm font-semibold text-red-800">Connection Error</p>
-          <p className="text-sm text-red-700">{error}</p>
-          <p className="mt-2 text-xs text-red-600">
+        <div className="rounded-2xl border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/40 px-4 py-3">
+          <p className="text-sm font-semibold text-red-800 dark:text-red-200">Connection Error</p>
+          <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
+          <p className="mt-2 text-xs text-red-600 dark:text-red-400">
             Make sure you've allowed microphone access in your browser.
           </p>
         </div>
@@ -130,7 +130,7 @@ export function VoiceRealtimeUI({ round }: { round: Round }) {
 
       {/* Audio Visualizer */}
       {isConnected && (
-        <div className="rounded-2xl border bg-gradient-to-br from-blue-50 to-card px-6 py-8">
+        <div className="rounded-2xl border bg-gradient-to-br from-blue-50 to-card dark:from-blue-950/30 px-6 py-8">
           <div className="flex items-center justify-center gap-2">
             {/* Simple audio visualizer bars */}
             {[...Array(7)].map((_, i) => (
@@ -168,7 +168,7 @@ export function VoiceRealtimeUI({ round }: { round: Round }) {
                 className={`rounded-lg px-3 py-2 text-sm ${
                   item.role === 'user'
                     ? 'bg-muted text-foreground'
-                    : 'bg-blue-50 text-foreground'
+                    : 'bg-blue-50 dark:bg-blue-950/30 text-foreground'
                 }`}
               >
                 <span className="font-semibold">
@@ -183,7 +183,7 @@ export function VoiceRealtimeUI({ round }: { round: Round }) {
 
       {/* Instructions */}
       {!isConnected && (
-        <div className="rounded-2xl bg-blue-50 px-4 py-4">
+        <div className="rounded-2xl bg-blue-50 dark:bg-blue-950/40 px-4 py-4">
           <p className="text-sm text-foreground">
             <strong>Instructions:</strong> Click "Start Call" to begin your voice conversation with an AI prospect.
             This is a live role-play exercise where you'll conduct a discovery call, handle objections, and

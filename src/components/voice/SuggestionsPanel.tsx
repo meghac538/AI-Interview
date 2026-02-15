@@ -31,13 +31,13 @@ export function SuggestionsPanel({ suggestions, loading, onDismiss, onApply }: S
   const getCategoryBadge = (category: string): { label: string; color: string } => {
     switch (category) {
       case 'context_injection':
-        return { label: 'Context', color: 'bg-blue-100 text-blue-700' }
+        return { label: 'Context', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' }
       case 'curveball':
-        return { label: 'Curveball', color: 'bg-purple-100 text-purple-700' }
+        return { label: 'Curveball', color: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300' }
       case 'followup_question':
-        return { label: 'Follow-up', color: 'bg-green-100 text-green-700' }
+        return { label: 'Follow-up', color: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' }
       default:
-        return { label: category, color: 'bg-gray-100 text-gray-700' }
+        return { label: category, color: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300' }
     }
   }
 
@@ -54,11 +54,11 @@ export function SuggestionsPanel({ suggestions, loading, onDismiss, onApply }: S
 
   if (loading) {
     return (
-      <div className="bg-white rounded-lg shadow-sm border p-6">
+      <div className="bg-card rounded-lg shadow-sm border p-6">
         <h3 className="text-lg font-semibold mb-4">AI Suggestions</h3>
         <div className="space-y-3 animate-pulse">
           {[...Array(3)].map((_, i) => (
-            <div key={i} className="h-24 bg-gray-200 rounded"></div>
+            <div key={i} className="h-24 bg-muted rounded"></div>
           ))}
         </div>
       </div>
@@ -67,9 +67,9 @@ export function SuggestionsPanel({ suggestions, loading, onDismiss, onApply }: S
 
   if (!suggestions || suggestions.length === 0) {
     return (
-      <div className="bg-white rounded-lg shadow-sm border p-6">
+      <div className="bg-card rounded-lg shadow-sm border p-6">
         <h3 className="text-lg font-semibold mb-4">AI Suggestions</h3>
-        <div className="text-center text-gray-500 py-8">
+        <div className="text-center text-muted-foreground py-8">
           <p className="text-lg font-medium">No suggestions yet</p>
           <p className="text-sm mt-2">AI will provide coaching tips as the conversation progresses</p>
         </div>
@@ -78,10 +78,10 @@ export function SuggestionsPanel({ suggestions, loading, onDismiss, onApply }: S
   }
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border p-6">
+    <div className="bg-card rounded-lg shadow-sm border p-6">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-semibold">AI Suggestions</h3>
-        <span className="text-sm text-gray-500">{suggestions.length} active</span>
+        <span className="text-sm text-muted-foreground">{suggestions.length} active</span>
       </div>
 
       <div className="space-y-3">
@@ -102,9 +102,9 @@ export function SuggestionsPanel({ suggestions, loading, onDismiss, onApply }: S
                     <span className={`text-xs font-medium px-2 py-1 rounded ${categoryBadge.color}`}>
                       {categoryBadge.label}
                     </span>
-                    <span className="text-xs text-gray-500 capitalize">{suggestion.priority} priority</span>
+                    <span className="text-xs text-muted-foreground capitalize">{suggestion.priority} priority</span>
                   </div>
-                  <p className="text-sm text-gray-700">{suggestion.text}</p>
+                  <p className="text-sm text-foreground">{suggestion.text}</p>
                 </div>
               </div>
 
@@ -113,7 +113,7 @@ export function SuggestionsPanel({ suggestions, loading, onDismiss, onApply }: S
                 {onApply && (
                   <button
                     onClick={() => onApply(suggestion)}
-                    className="px-3 py-1.5 text-sm font-medium text-blue-700 bg-blue-50 rounded hover:bg-blue-100 transition-colors"
+                    className="px-3 py-1.5 text-sm font-medium text-blue-700 bg-blue-50 dark:text-blue-300 dark:bg-blue-900/40 rounded hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-colors"
                   >
                     Apply
                   </button>
@@ -121,7 +121,7 @@ export function SuggestionsPanel({ suggestions, loading, onDismiss, onApply }: S
                 <button
                   onClick={() => handleDismiss(suggestion.id)}
                   disabled={isBeingDismissed}
-                  className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-gray-50 rounded hover:bg-gray-100 transition-colors disabled:opacity-50"
+                  className="px-3 py-1.5 text-sm font-medium text-muted-foreground bg-muted rounded hover:bg-muted/80 transition-colors disabled:opacity-50"
                 >
                   {isBeingDismissed ? 'Dismissing...' : 'Dismiss'}
                 </button>

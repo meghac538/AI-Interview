@@ -329,12 +329,18 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig) {
       } else if (command.command_type === 'curveball_inject') {
         const curveball = command.payload.curveball
         const label = command.payload.label || curveball
+        const customText = command.payload.custom_text
+
+        // Use custom text if provided, otherwise look up from library
+        const prompt = customText
+          ? `[Immediately inject this objection] ${customText}`
+          : getCurveballPrompt(curveball, label)
 
         // Inject curveball via SDK
         // @ts-expect-error - sendText exists at runtime but not in SDK types
-        conversationRef.current.sendText(getCurveballPrompt(curveball, label))
+        conversationRef.current.sendText(prompt)
 
-        console.log(`✅ Curveball injected: ${label}`)
+        console.log(`Curveball injected: ${customText || label}`)
       }
     } catch (err) {
       console.error('Failed to send command (WebSocket may be closed):', err)

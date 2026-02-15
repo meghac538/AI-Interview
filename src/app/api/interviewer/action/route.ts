@@ -2,42 +2,11 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase/server'
 import crypto from 'crypto'
 import { fetchScopePackage, getActiveRoundNumber, emitRedFlag, forceStopSession } from '@/lib/db/helpers'
+import { getCurveballByKey, getPersonasForTrack, CURVEBALL_LIBRARY } from '@/lib/constants/curveball-library'
+import { getAIClient, mapModel } from '@/lib/ai/client'
 
-type CurveballDefinition = {
-  key: string
-  title: string
-  detail: string
-}
-
-const curveballLibrary: Record<string, CurveballDefinition> = {
-  budget_cut: {
-    key: 'budget_cut',
-    title: 'Budget cut',
-    detail: 'Finance just reduced the initiative budget by 15%. You must justify ROI and propose a credible path to fit constraints.'
-  },
-  security_concern: {
-    key: 'security_concern',
-    title: 'Security concern',
-    detail: 'A security stakeholder is now involved. Expect deeper questions about data handling, compliance, and risk mitigation.'
-  },
-  timeline_mismatch: {
-    key: 'timeline_mismatch',
-    title: 'Timeline mismatch',
-    detail: 'The prospect needs delivery in 6 weeks, but your standard implementation is longer. You must align expectations without overpromising.'
-  },
-  competitor_pressure: {
-    key: 'competitor_pressure',
-    title: 'Competitor pressure',
-    detail: 'They are actively evaluating a competitor. You must differentiate with concrete value, proof, and a clear next step.'
-  },
-  cfo_pushback: {
-    key: 'cfo_pushback',
-    title: 'CFO pushback',
-    detail: 'The CFO is pushing back on spend and risk. You must be crisp, factual, and quantify outcomes.'
-  }
-}
-
-const personaSequence = ['skeptical_buyer', 'cfo_pushback', 'security_lead', 'champion'] as const
+// Round types where the AI handles curveballs in conversation — no need to contextualize
+const CONVERSATIONAL_ROUNDS = new Set(['voice', 'voice-realtime', 'email', 'agentic'])
 
 function toArray(value: unknown) {
   return Array.isArray(value) ? value : []
@@ -141,11 +110,22 @@ export async function POST(request: Request) {
 
       if (action_type === 'switch_persona' && targetRoundNumber != null) {
         const existingRound = roundPlan.find((round: any) => round?.round_number === targetRoundNumber) || null
-        const currentPersona = (existingRound?.config?.persona_override || existingRound?.config?.persona || null) as
-          | (typeof personaSequence)[number]
-          | null
+        const currentPersona = (existingRound?.config?.persona_override || existingRound?.config?.persona || null) as string | null
 
-        const nextPersona = pickNextValue(personaSequence, currentPersona)
+        // Support custom persona text, explicit persona key, or cycle through track-aware personas
+        const customText = payload?.custom_text ? String(payload.custom_text).slice(0, 1000) : null
+        let nextPersona: string | null = null
+
+        if (customText) {
+          nextPersona = 'custom'
+        } else if (payload?.persona) {
+          nextPersona = String(payload.persona)
+        } else {
+          const track = existingRound?.config?.track || payload?.track || 'sales'
+          const trackPersonas = getPersonasForTrack(track)
+          const personaKeys = trackPersonas.map((p) => p.key)
+          nextPersona = pickNextValue(personaKeys, currentPersona)
+        }
 
         const updatedRoundPlan = roundPlan.map((round: any) => {
           if (round?.round_number !== targetRoundNumber) return round
@@ -154,6 +134,7 @@ export async function POST(request: Request) {
             config: {
               ...(round?.config || {}),
               persona_override: nextPersona,
+              custom_persona_prompt: customText || undefined,
               persona_switched_at: now
             }
           }
@@ -164,6 +145,7 @@ export async function POST(request: Request) {
           interviewer_controls: {
             ...interviewerControls,
             persona_override: nextPersona,
+            custom_persona_prompt: customText || undefined,
             persona_switched_at: now
           }
         }
@@ -190,17 +172,78 @@ export async function POST(request: Request) {
             .filter(Boolean)
         )
 
-        const candidateKeys = (payload?.curveball_key ? [String(payload.curveball_key)] : configuredCurveballs).filter(Boolean)
-        const fallbackKeys = Object.keys(curveballLibrary)
-        const selectionPool = candidateKeys.length > 0 ? candidateKeys : fallbackKeys
+        // Support custom text curveballs
+        const customText = payload?.custom_text ? String(payload.custom_text).slice(0, 500) : null
 
-        const nextKey =
-          selectionPool.find((key) => !injectedKeys.has(key)) || selectionPool[0] || fallbackKeys[0] || 'budget_cut'
+        let definition: { key: string; title: string; detail: string }
 
-        const definition = curveballLibrary[nextKey] || {
-          key: nextKey,
-          title: nextKey.replace(/_/g, ' '),
-          detail: 'New constraint injected by interviewer.'
+        if (customText) {
+          definition = {
+            key: `custom_${Date.now()}`,
+            title: 'Custom constraint',
+            detail: customText,
+          }
+        } else {
+          const candidateKeys = (payload?.curveball_key ? [String(payload.curveball_key)] : configuredCurveballs).filter(Boolean)
+          const fallbackKeys = CURVEBALL_LIBRARY.map((c) => c.key)
+          const selectionPool = candidateKeys.length > 0 ? candidateKeys : fallbackKeys
+
+          const nextKey =
+            selectionPool.find((key) => !injectedKeys.has(key)) || selectionPool[0] || fallbackKeys[0] || 'budget_cut'
+
+          const fromLibrary = getCurveballByKey(nextKey)
+          definition = fromLibrary
+            ? { key: fromLibrary.key, title: fromLibrary.title, detail: fromLibrary.detail }
+            : { key: nextKey, title: nextKey.replace(/_/g, ' '), detail: 'New constraint injected by interviewer.' }
+        }
+
+        // For non-conversational rounds (text/code/mcq), contextualize library curveballs
+        // so they relate to the round's actual prompt instead of being generic.
+        // Skip custom curveballs — the interviewer already wrote context-specific text.
+        const roundType = existingRound?.round_type || existingRound?.config?.round_type || ''
+        if (!customText && !CONVERSATIONAL_ROUNDS.has(roundType) && existingRound?.prompt) {
+          try {
+            const ai = getAIClient()
+            const contextResponse = await ai.chat.completions.create({
+              model: mapModel('gpt-4o-mini'),
+              temperature: 0.7,
+              max_tokens: 200,
+              messages: [
+                {
+                  role: 'system',
+                  content:
+                    'You are an interview design assistant. You rewrite generic curveball constraints ' +
+                    'so they are specific and relevant to the interview round the candidate is working on. ' +
+                    'Keep the same category/spirit of the constraint but rewrite the title and detail ' +
+                    'so they directly relate to the round topic and question. ' +
+                    'The candidate should immediately understand how this constraint affects their current task. ' +
+                    'Output ONLY a JSON object with "title" and "detail" keys. No markdown, no explanation.'
+                },
+                {
+                  role: 'user',
+                  content:
+                    `Round type: ${roundType}\n` +
+                    `Round title: ${existingRound.title || 'Untitled'}\n` +
+                    `Round prompt:\n${existingRound.prompt.slice(0, 600)}\n\n` +
+                    `Curveball to contextualize:\nTitle: ${definition.title}\nDetail: ${definition.detail}\n\n` +
+                    'Rewrite the title and detail so the constraint is specific to this round\'s topic and question.'
+                }
+              ]
+            })
+
+            const raw = contextResponse.choices?.[0]?.message?.content?.trim() || ''
+            const parsed = JSON.parse(raw)
+            if (parsed.title && parsed.detail) {
+              definition = {
+                ...definition,
+                title: String(parsed.title).slice(0, 100),
+                detail: String(parsed.detail).slice(0, 500)
+              }
+            }
+          } catch (ctxErr) {
+            // If contextualization fails, proceed with the original definition
+            console.warn('Curveball contextualization failed, using original:', ctxErr)
+          }
         }
 
         const nextInjected = [
@@ -244,6 +287,21 @@ export async function POST(request: Request) {
           .eq('id', scopePackage.id)
 
         if (updateScopeError) throw updateScopeError
+
+        // For non-conversational rounds, displaying the curveball IS the consumption.
+        // Emit curveball_used immediately so the dashboard shows "Used" instead of "Pending".
+        if (!CONVERSATIONAL_ROUNDS.has(roundType)) {
+          await supabaseAdmin.from('live_events').insert({
+            session_id,
+            event_type: 'curveball_used',
+            actor: 'system',
+            payload: {
+              curveball: definition.key,
+              round_number: targetRoundNumber,
+              source: 'auto_display'
+            }
+          })
+        }
       }
 
       if (action_type === 'end_round') {
@@ -393,18 +451,6 @@ export async function POST(request: Request) {
           .update({ recommended_followups: updated })
           .eq('id', latest.id)
       }
-    }
-
-    if (action_type !== 'manual_followup') {
-      await supabaseAdmin.from('live_events').insert({
-        session_id,
-        event_type: 'interviewer_action',
-        actor: 'interviewer',
-        payload: {
-          action_type,
-          ...payload
-        }
-      })
     }
 
     if (action_type === 'escalate_difficulty') {
