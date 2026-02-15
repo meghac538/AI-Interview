@@ -58,16 +58,31 @@ export async function POST(request: Request) {
 
     if (jobError) throw jobError
 
-    // Step 2: Create canonical job row (best-effort for legacy FK compatibility)
-    const { error: canonicalJobError } = await supabaseAdmin
+    // Step 2: Create canonical job row (required for candidates FK)
+    let canonicalJobId: string | null = null
+    const { data: canonicalJob, error: canonicalJobError } = await supabaseAdmin
       .from('jobs')
       .insert({
         job_id: jobProfile.job_id,
         job_title: role,
         location: 'Remote'
       })
+      .select('id')
+      .single()
+
     if (canonicalJobError) {
-      console.warn('Jobs table insert skipped:', canonicalJobError.message)
+      // If insert failed (e.g. duplicate), try to find existing
+      const { data: existingJob } = await supabaseAdmin
+        .from('jobs')
+        .select('id')
+        .eq('job_id', jobProfile.job_id)
+        .single()
+      canonicalJobId = existingJob?.id || null
+      if (!canonicalJobId) {
+        console.warn('Jobs table insert failed:', canonicalJobError.message)
+      }
+    } else {
+      canonicalJobId = canonicalJob.id
     }
 
     // Step 3: Find existing candidate or create new one
@@ -82,13 +97,15 @@ export async function POST(request: Request) {
 
     let candidate = existingCandidate
     if (!candidate) {
+      if (!canonicalJobId) throw new Error('Failed to create or find canonical job record')
+
       const { data: newCandidate, error: candidateError } = await supabaseAdmin
         .from('candidates')
         .insert({
           rippling_candidate_id: `temp_${Date.now()}`,
           name: candidate_name,
           email: candidateEmail,
-          job_id: jobProfile.job_id,
+          job_id: canonicalJobId,
           applied_at: new Date().toISOString(),
           status: 'live_scheduled'
         })
