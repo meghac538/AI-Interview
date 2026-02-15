@@ -1,3 +1,5 @@
+'use client'
+
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase/client'
 
@@ -42,6 +44,7 @@ export function useVoiceAnalysis(config: UseVoiceAnalysisConfig) {
     const fetchInitialData = async () => {
       try {
         setLoading(true)
+        setError(null)
 
         // Fetch latest Say Meter
         const { data: meterData, error: meterError } = await supabase
@@ -172,6 +175,11 @@ export function useVoiceAnalysis(config: UseVoiceAnalysisConfig) {
 
   // Dismiss a suggestion
   const dismissSuggestion = async (suggestionId: string) => {
+    // Optimistic update
+    setSuggestions((prev) =>
+      prev.map((s) => (s.id === suggestionId ? { ...s, dismissed: true } : s))
+    )
+
     try {
       const { error } = await supabase
         .from('voice_analysis')
@@ -179,6 +187,10 @@ export function useVoiceAnalysis(config: UseVoiceAnalysisConfig) {
         .eq('id', suggestionId)
 
       if (error) {
+        // Revert on error
+        setSuggestions((prev) =>
+          prev.map((s) => (s.id === suggestionId ? { ...s, dismissed: false } : s))
+        )
         console.error('Failed to dismiss suggestion:', error)
         throw error
       }
