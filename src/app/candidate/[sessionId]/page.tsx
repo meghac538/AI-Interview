@@ -186,6 +186,10 @@ function CandidateView() {
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-skywash-600">
+                    AI Interview
+                  </span>
+                  <span className="text-ink-200">|</span>
                   <span className="rounded-full border border-ink-200 bg-ink-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-500">
                     Live Interview
                   </span>

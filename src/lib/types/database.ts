@@ -118,6 +118,7 @@ export interface InterviewScopePackage {
 }
 
 export interface Round {
+  id: string
   round_number: number
   round_type: RoundType
   title: string

@@ -88,8 +88,9 @@ export function useRealtimeSession(sessionId: string) {
         },
         (payload) => {
           if (payload.new) {
+            const newRecord = payload.new as Record<string, any>
             setScores((prev) => {
-              const index = prev.findIndex((s) => s.id === payload.new.id)
+              const index = prev.findIndex((s) => s.id === newRecord.id)
               if (index >= 0) {
                 const updated = [...prev]
                 updated[index] = payload.new as Score

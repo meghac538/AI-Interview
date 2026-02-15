@@ -201,7 +201,7 @@ export function VoiceCallUI({ round }: { round: Round }) {
         </div>
 
         <Button
-          variant={chatActive ? 'default' : 'default'}
+          variant={chatActive ? 'primary' : 'primary'}
           size="sm"
           onClick={chatActive ? endChat : startChat}
           className={chatActive ? 'bg-signal-500 hover:bg-signal-600' : ''}

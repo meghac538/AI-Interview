@@ -21,11 +21,7 @@ export async function POST(request: Request) {
         title: role,
         location: 'Remote',
         level_band: level.toLowerCase() as 'junior' | 'mid' | 'senior',
-        track: 'sales',
-        role_success_criteria: 'Standard sales criteria',
-        must_have_flags: [],
-        disqualifiers: [],
-        gating_thresholds: { proceed: 70, caution: 50, stop: 30 }
+        track: 'sales'
       })
       .select()
       .single()
@@ -40,7 +36,6 @@ export async function POST(request: Request) {
         name: candidate_name,
         email: `${candidate_name.toLowerCase().replace(/\s+/g, '.')}@temp.com`,
         job_id: jobProfile.job_id,
-        applied_at: new Date().toISOString(),
         status: 'live_scheduled'
       })
       .select()
@@ -113,11 +108,7 @@ export async function POST(request: Request) {
         generated_at: new Date().toISOString(),
         track: 'sales',
         round_plan: salesRounds,
-        question_set: {},
-        simulation_payloads: {},
-        rubric_version: '1.0',
-        models_used: ['gpt-4o'],
-        approved_by: null
+        question_set: {}
       })
       .select()
       .single()

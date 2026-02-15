@@ -1,10 +1,15 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useParams } from 'next/navigation'
+import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
 import { GatePanel } from '@/components/GatePanel'
+import { ArrowLeft, Send, CheckCircle2, Link2, Copy, Check } from 'lucide-react'
 import { SessionProvider, useSession } from '@/contexts/SessionContext'
 
 type TranscriptEntry = {
@@ -214,6 +219,14 @@ function InterviewerView() {
     })
   }, [rounds])
 
+  const [candidateEmail, setCandidateEmail] = useState('')
+  const [expiryHours, setExpiryHours] = useState(2)
+  const [sendingCreds, setSendingCreds] = useState(false)
+  const [credsSent, setCredsSent] = useState(false)
+  const [magicLink, setMagicLink] = useState<string | null>(null)
+  const [credsError, setCredsError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+
   if (!session) return null
 
   const candidateName = (session as any).candidate?.name || 'Candidate'
@@ -269,6 +282,33 @@ function InterviewerView() {
     }
   }
 
+  const handleSendCreds = async () => {
+    setSendingCreds(true)
+    setCredsError(null)
+    try {
+      const response = await fetch('/api/auth/send-magic-link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: session.id,
+          email: candidateEmail,
+          expiry_hours: expiryHours,
+        }),
+      })
+      const data = await response.json()
+      if (response.ok) {
+        setCredsSent(true)
+        if (data.magic_link) setMagicLink(data.magic_link)
+      } else {
+        setCredsError(data.error || 'Failed to send credentials')
+      }
+    } catch {
+      setCredsError('Network error. Please try again.')
+    } finally {
+      setSendingCreds(false)
+    }
+  }
+
   const escalateDifficulty = async () => {
     const nextRound = (rounds || []).find((round) => round.status === 'pending')
     await sendAction('escalate_difficulty', {
@@ -277,8 +317,17 @@ function InterviewerView() {
   }
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top,#eef6ff_0%,#f7f7fb_35%,#fefefe_100%)] px-6 py-10">
-      <div className="mx-auto grid w-full max-w-6xl gap-6 lg:grid-cols-[1.1fr,1fr]">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,#eef6ff_0%,#f7f7fb_35%,#fefefe_100%)] px-6 py-8">
+      <div className="mx-auto w-full max-w-6xl space-y-6">
+        <Link
+          href="/interviewer"
+          className="inline-flex items-center gap-1.5 text-xs text-ink-500 hover:text-ink-700 transition-colors"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Back to Dashboard
+        </Link>
+
+      <div className="grid w-full gap-6 lg:grid-cols-[1.1fr,1fr]">
         <section className="space-y-6">
           <Card className="bg-white/90">
             <CardHeader className="space-y-2">
@@ -355,7 +404,7 @@ function InterviewerView() {
                         : `Duration: ${round.durationMinutes} min`}
                     </div>
                   </div>
-                  <Badge tone={round.status === 'active' ? 'sky' : round.status === 'completed' ? 'emerald' : 'ink'}>
+                  <Badge tone={round.status === 'active' ? 'sky' : round.status === 'completed' ? 'signal' : 'neutral'}>
                     {round.status}
                   </Badge>
                 </div>
@@ -403,6 +452,96 @@ function InterviewerView() {
           />
           <Card className="bg-white/90">
             <CardHeader>
+              <h3 className="text-base font-semibold">Candidate Access</h3>
+              <p className="text-xs text-ink-500">
+                Send login credentials to the candidate via email.
+              </p>
+            </CardHeader>
+            <CardContent>
+              {credsSent ? (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 rounded-2xl bg-skywash-50 border border-skywash-200 px-4 py-3">
+                    <CheckCircle2 className="h-4 w-4 text-skywash-600 shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-skywash-800">
+                        Credentials sent to {candidateEmail}
+                      </p>
+                      <p className="text-xs text-skywash-600">
+                        Access expires in {expiryHours} hour{expiryHours !== 1 ? 's' : ''}
+                      </p>
+                    </div>
+                  </div>
+                  {magicLink && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs text-ink-500 flex items-center gap-1">
+                          <Link2 className="h-3 w-3" />
+                          Backup link (share if email doesn&apos;t arrive):
+                        </p>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(magicLink)
+                            setCopied(true)
+                            setTimeout(() => setCopied(false), 2000)
+                          }}
+                          className="flex items-center gap-1 text-xs text-ink-500 hover:text-ink-700 transition-colors"
+                        >
+                          {copied ? <Check className="h-3 w-3 text-skywash-600" /> : <Copy className="h-3 w-3" />}
+                          {copied ? 'Copied' : 'Copy'}
+                        </button>
+                      </div>
+                      <div className="rounded-xl bg-ink-50 px-3 py-2 text-xs text-ink-600 break-all select-all">
+                        {magicLink}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <Input
+                    type="email"
+                    placeholder="candidate@email.com"
+                    value={candidateEmail}
+                    onChange={(e) => setCandidateEmail(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && candidateEmail.trim()) handleSendCreds()
+                    }}
+                  />
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-ink-600">Access expires in</label>
+                    <Select value={String(expiryHours)} onChange={(e) => setExpiryHours(Number(e.target.value))}>
+                      <option value="1">1 hour</option>
+                      <option value="2">2 hours</option>
+                      <option value="4">4 hours</option>
+                      <option value="8">8 hours</option>
+                      <option value="24">24 hours</option>
+                    </Select>
+                  </div>
+                  {credsError && (
+                    <p className="text-xs text-signal-600">{credsError}</p>
+                  )}
+                  <Button
+                    size="sm"
+                    onClick={handleSendCreds}
+                    disabled={sendingCreds || !candidateEmail.trim()}
+                    className="w-full"
+                  >
+                    {sendingCreds ? (
+                      'Sending...'
+                    ) : (
+                      <>
+                        <Send className="mr-2 h-4 w-4" />
+                        Send Creds to Candidate
+                      </>
+                    )}
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="bg-white/90">
+            <CardHeader>
               <h3 className="text-base font-semibold">Interviewer Notes</h3>
             </CardHeader>
             <CardContent>
@@ -414,6 +553,7 @@ function InterviewerView() {
             </CardContent>
           </Card>
         </aside>
+      </div>
       </div>
     </main>
   )

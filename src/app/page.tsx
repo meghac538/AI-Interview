@@ -1,74 +1,42 @@
-import Link from "next/link";
-import { ArrowRight, Shield, Sparkles } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
-
-const highlights = [
-  {
-    title: "Candidate Experience",
-    description:
-      "Step-by-step workflow with task timers, dynamic inputs, and AI assistant guidance.",
-    icon: Sparkles
-  },
-  {
-    title: "Gate Panel",
-    description:
-      "Real-time scoring, red flags, and control levers for interviewer intervention.",
-    icon: Shield
-  }
-];
+import Link from 'next/link'
+import { Card, CardContent } from '@/components/ui/card'
+import { Shield } from 'lucide-react'
 
 export default function HomePage() {
   return (
-    <main className="min-h-screen px-6 py-12">
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-10">
-        <header className="flex flex-col gap-6">
-          <div className="flex items-center gap-3">
+    <main className="min-h-screen flex flex-col items-center justify-center bg-[radial-gradient(circle_at_top,#eef6ff_0%,#f7f7fb_35%,#fefefe_100%)] px-6">
+      <div className="w-full max-w-md space-y-10 text-center">
+        <header className="space-y-3">
+          <div className="flex items-center justify-center gap-3">
             <div className="h-10 w-10 rounded-2xl bg-skywash-600 shadow-aura" />
             <span className="text-sm font-semibold uppercase tracking-[0.2em] text-ink-500">
               Interview Platform
             </span>
           </div>
-          <div className="max-w-2xl space-y-5">
-            <h1 className="font-display text-4xl text-ink-900 md:text-5xl">
-              Governed by AI scoring and human control.
-            </h1>
-            <p className="text-base text-ink-600 md:text-lg">
-              Built for deterministic, auditable interviews with agent-based rounds and live gate decisions.
-              Candidates progress through structured tasks while interviewers monitor evidence-backed scores.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-4">
-            <Link href="/test">
-              <Button size="lg">
-                Create Test Session
-                <ArrowRight className="ml-2 h-4 w-4" />
-              </Button>
-            </Link>
-            <Link href="/interviewer">
-              <Button size="lg" variant="outline">
-                View Active Sessions
-              </Button>
-            </Link>
-          </div>
+          <h1 className="font-display text-3xl text-ink-900">Welcome</h1>
+          <p className="text-sm text-ink-500">Sign in to manage interview sessions.</p>
         </header>
 
-        <section className="grid gap-6 md:grid-cols-2">
-          {highlights.map((item) => (
-            <Card key={item.title} className="animate-rise-in">
-              <CardHeader>
-                <div className="flex items-center gap-3">
-                  <item.icon className="h-6 w-6 text-skywash-700" />
-                  <h2 className="text-xl font-semibold text-ink-900">{item.title}</h2>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-ink-600">{item.description}</p>
-              </CardContent>
-            </Card>
-          ))}
-        </section>
+        <Link href="/interviewer/login" className="group block">
+          <Card className="bg-white/90 shadow-panel transition hover:border-skywash-300 hover:shadow-lg">
+            <CardContent className="flex flex-col items-center gap-4 py-10">
+              <Shield className="h-10 w-10 text-skywash-600 transition group-hover:scale-110" />
+              <div className="space-y-1">
+                <h2 className="text-lg font-semibold text-ink-900">
+                  Interviewer Login
+                </h2>
+                <p className="text-xs text-ink-500">
+                  Create sessions, send candidate access links, and score interviews.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+
+        <p className="text-xs text-ink-400">
+          Candidates receive access via a magic link sent by their interviewer.
+        </p>
       </div>
     </main>
-  );
+  )
 }
