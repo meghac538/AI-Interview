@@ -1,12 +1,7 @@
 import { NextResponse } from 'next/server'
-import OpenAI from 'openai'
 import { supabaseAdmin } from '@/lib/supabase/server'
-import { randomUUID } from 'crypto'
 import { extractResumeSkills, computeInterviewLevel } from '@/lib/db/helpers'
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-})
+import { getAIClient, mapModel } from '@/lib/ai/client'
 
 export async function POST(request: Request) {
   try {
@@ -90,7 +85,6 @@ export async function POST(request: Request) {
       const { data: newCandidate, error: candidateError } = await supabaseAdmin
         .from('candidates')
         .insert({
-          hash_id: randomUUID(),
           rippling_candidate_id: `temp_${Date.now()}`,
           name: candidate_name,
           email: candidateEmail,
@@ -594,10 +588,93 @@ function buildImplementationFallbackRounds(role: string) {
     },
     {
       round_number: 2,
-      round_type: 'text' as const,
-      title: 'Round 2: Stakeholder Communication',
+      round_type: 'agentic' as const,
+      title: 'Round 2: Technical Integration & Internal Alignment',
       prompt:
-        'The client from Round 1 emails you 3 weeks into implementation: "The AI is giving wrong answers 20% of the time ' +
+        'A customer (VP of Engineering at DataFlow Inc.) is asking detailed questions about API integration, authentication, ' +
+        'and data migration. You have access to two channels:\n\n' +
+        '• Customer Chat — Respond to the customer directly with accurate, professional answers\n' +
+        '• Internal Team — Consult your Solutions Architect (Alex Chen) and Product Director (Sam Patel) for technical details and roadmap info\n\n' +
+        'Extract the right information from your internal team, then relay it clearly to the customer. ' +
+        'Set realistic expectations, identify risks, and avoid overpromising.',
+      duration_minutes: 16,
+      status: 'pending',
+      config: {
+        competency: 'Cross-functional Coordination',
+        difficulty: 'L2',
+        format: 'agentic',
+        agents: {
+          customer: {
+            name: 'Jordan Rivera',
+            role: 'VP of Engineering',
+            company: 'DataFlow Inc.',
+            context: 'Mid-market SaaS, 50 engineers, migrating from legacy system to microservices',
+            behavior: 'Technical, detail-oriented, asks about API rate limits, auth, data migration, error handling'
+          },
+          presales_engineer: {
+            name: 'Alex Chen',
+            role: 'Solutions Architect',
+            behavior: 'Knows API inside-out, sometimes adds caveats, may disagree with product on timelines'
+          },
+          product_owner: {
+            name: 'Sam Patel',
+            role: 'Product Director',
+            behavior: 'Knows roadmap, confirms/denies features, gives strategic context, sometimes vague on timelines'
+          }
+        },
+        scoring_rubric: {
+          dimensions: [
+            {
+              name: 'internal_coordination',
+              description: 'Quality of questions to internal team and synthesis of their answers',
+              maxScore: 25,
+              scoringCriteria: [
+                'Asks specific, targeted questions to the right team member',
+                'Synthesizes conflicting info from pre-sales and product',
+                'Does not relay raw internal discussion to customer'
+              ]
+            },
+            {
+              name: 'technical_comprehension',
+              description: 'Accuracy of technical details relayed to customer',
+              maxScore: 25,
+              scoringCriteria: [
+                'Correctly conveys API limits, auth options, migration details',
+                'Does not invent capabilities or misstate specifications',
+                'Translates technical jargon appropriately for customer'
+              ]
+            },
+            {
+              name: 'customer_communication',
+              description: 'Professional, clear, timely responses to customer',
+              maxScore: 25,
+              scoringCriteria: [
+                'Responds to all customer questions',
+                'Maintains professional and confident tone',
+                'Structures answers clearly (not rambling or vague)'
+              ]
+            },
+            {
+              name: 'risk_identification',
+              description: 'Identifies gaps, sets realistic expectations, flags risks',
+              maxScore: 25,
+              scoringCriteria: [
+                'Flags limitations and caveats proactively',
+                'Sets realistic timelines based on internal input',
+                'Does not overpromise on roadmap items or unconfirmed features'
+              ]
+            }
+          ]
+        },
+        evidence_requirements: { required: ['internal questions', 'customer responses', 'risk/limitation mentions'] }
+      }
+    },
+    {
+      round_number: 3,
+      round_type: 'text' as const,
+      title: 'Round 3: Stakeholder Communication',
+      prompt:
+        'The client from earlier emails you 3 weeks into implementation: "The AI is giving wrong answers 20% of the time ' +
         'and my team is losing trust. I\'m considering pulling the plug." ' +
         'Draft: (1) Your immediate response email to the client, (2) An internal action plan for your team, ' +
         '(3) A revised timeline with checkpoints to rebuild confidence.',
@@ -639,8 +716,8 @@ Return JSON:
 {"prompt":"...","expected_output":"..."}`
 
   try {
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o',
+    const completion = await getAIClient().chat.completions.create({
+      model: mapModel('gpt-4o'),
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.4,
       response_format: { type: 'json_object' },

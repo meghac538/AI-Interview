@@ -27,21 +27,21 @@ function CodeBlock({ children, className }: CodeBlockProps) {
   }
 
   return (
-    <div className="relative my-4 rounded-2xl bg-ink-900 border border-ink-700 overflow-hidden">
+    <div className="relative my-4 rounded-2xl bg-zinc-900 border border-zinc-700 overflow-hidden">
       {/* Header with language label and copy button */}
-      <div className="flex items-center justify-between px-4 py-2 bg-ink-800 border-b border-ink-700">
-        <span className="text-xs font-medium text-ink-300 uppercase tracking-wider">
+      <div className="flex items-center justify-between px-4 py-2 bg-zinc-800 border-b border-zinc-700">
+        <span className="text-xs font-medium text-zinc-300 uppercase tracking-wider">
           {language}
         </span>
         <button
           onClick={handleCopy}
-          className="flex items-center gap-1.5 text-xs text-ink-400 hover:text-ink-200 transition-colors"
+          className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
           aria-label={copied ? 'Copied!' : 'Copy code'}
         >
           {copied ? (
             <>
-              <Check className="h-3.5 w-3.5 text-skywash-400" />
-              <span className="text-skywash-400">Copied!</span>
+              <Check className="h-3.5 w-3.5 text-blue-400" />
+              <span className="text-blue-400">Copied!</span>
             </>
           ) : (
             <>
@@ -75,39 +75,39 @@ export function MarkdownContent({ content }: MarkdownContentProps) {
         components={{
           // Paragraphs
           p: ({ children }) => (
-            <p className="text-sm text-ink-700 mb-3 leading-relaxed last:mb-0">
+            <p className="text-sm text-foreground mb-3 leading-relaxed last:mb-0">
               {children}
             </p>
           ),
 
           // Headings
           h1: ({ children }) => (
-            <h1 className="font-display text-xl font-semibold text-ink-900 mb-3 mt-4 first:mt-0">
+            <h1 className="font-display text-xl font-semibold text-foreground mb-3 mt-4 first:mt-0">
               {children}
             </h1>
           ),
           h2: ({ children }) => (
-            <h2 className="font-display text-lg font-semibold text-ink-900 mb-2.5 mt-3 first:mt-0">
+            <h2 className="font-display text-lg font-semibold text-foreground mb-2.5 mt-3 first:mt-0">
               {children}
             </h2>
           ),
           h3: ({ children }) => (
-            <h3 className="text-base font-semibold text-ink-800 mb-2 mt-3 first:mt-0">
+            <h3 className="text-base font-semibold text-foreground mb-2 mt-3 first:mt-0">
               {children}
             </h3>
           ),
           h4: ({ children }) => (
-            <h4 className="text-sm font-semibold text-ink-800 mb-2 mt-2 first:mt-0">
+            <h4 className="text-sm font-semibold text-foreground mb-2 mt-2 first:mt-0">
               {children}
             </h4>
           ),
           h5: ({ children }) => (
-            <h5 className="text-sm font-semibold text-ink-700 mb-1.5 mt-2 first:mt-0">
+            <h5 className="text-sm font-semibold text-muted-foreground mb-1.5 mt-2 first:mt-0">
               {children}
             </h5>
           ),
           h6: ({ children }) => (
-            <h6 className="text-xs font-semibold text-ink-700 mb-1.5 mt-2 first:mt-0 uppercase tracking-wider">
+            <h6 className="text-xs font-semibold text-muted-foreground mb-1.5 mt-2 first:mt-0 uppercase tracking-wider">
               {children}
             </h6>
           ),
@@ -119,12 +119,12 @@ export function MarkdownContent({ content }: MarkdownContentProps) {
             </ul>
           ),
           ol: ({ children }) => (
-            <ol className="space-y-1.5 mb-3 ml-5 list-decimal marker:text-skywash-600 marker:font-semibold">
+            <ol className="space-y-1.5 mb-3 ml-5 list-decimal marker:text-primary marker:font-semibold">
               {children}
             </ol>
           ),
           li: ({ children }) => (
-            <li className="text-sm text-ink-700 leading-relaxed relative pl-0 before:content-['•'] before:absolute before:-left-4 before:text-skywash-600 before:font-bold">
+            <li className="text-sm text-foreground leading-relaxed relative pl-0 before:content-['•'] before:absolute before:-left-4 before:text-primary before:font-bold">
               {children}
             </li>
           ),
@@ -135,7 +135,7 @@ export function MarkdownContent({ content }: MarkdownContentProps) {
               href={href}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-skywash-600 hover:text-skywash-700 underline decoration-skywash-300 font-medium transition-colors"
+              className="text-primary hover:text-primary/80 underline decoration-primary/30 font-medium transition-colors"
             >
               {children}
             </a>
@@ -158,7 +158,7 @@ export function MarkdownContent({ content }: MarkdownContentProps) {
             // Inline code
             return (
               <code
-                className="bg-ink-100 text-ink-800 px-1.5 py-0.5 rounded-md font-mono text-[0.875em]"
+                className="bg-muted text-foreground px-1.5 py-0.5 rounded-md font-mono text-[0.875em]"
                 {...props}
               >
                 {children}
@@ -168,53 +168,53 @@ export function MarkdownContent({ content }: MarkdownContentProps) {
 
           // Blockquotes
           blockquote: ({ children }) => (
-            <blockquote className="border-l-4 border-skywash-400 bg-ink-50 pl-4 pr-3 py-2 my-3 text-sm text-ink-600 italic">
+            <blockquote className="border-l-4 border-primary bg-muted pl-4 pr-3 py-2 my-3 text-sm text-muted-foreground italic">
               {children}
             </blockquote>
           ),
 
           // Horizontal rule
           hr: () => (
-            <hr className="my-4 border-t border-ink-200" />
+            <hr className="my-4 border-t border-border" />
           ),
 
           // Tables (via remark-gfm)
           table: ({ children }) => (
-            <div className="my-4 overflow-x-auto rounded-xl border border-ink-200">
-              <table className="min-w-full divide-y divide-ink-200">
+            <div className="my-4 overflow-x-auto rounded-xl border">
+              <table className="min-w-full divide-y divide-border">
                 {children}
               </table>
             </div>
           ),
           thead: ({ children }) => (
-            <thead className="bg-ink-50">
+            <thead className="bg-muted">
               {children}
             </thead>
           ),
           tbody: ({ children }) => (
-            <tbody className="divide-y divide-ink-100 bg-white">
+            <tbody className="divide-y divide-border bg-card">
               {children}
             </tbody>
           ),
           tr: ({ children }) => (
-            <tr className="even:bg-ink-50/50">
+            <tr className="even:bg-muted/50">
               {children}
             </tr>
           ),
           th: ({ children }) => (
-            <th className="px-4 py-2 text-left text-xs font-semibold text-ink-700 uppercase tracking-wider">
+            <th className="px-4 py-2 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">
               {children}
             </th>
           ),
           td: ({ children }) => (
-            <td className="px-4 py-2 text-sm text-ink-700">
+            <td className="px-4 py-2 text-sm text-foreground">
               {children}
             </td>
           ),
 
           // Strong and emphasis
           strong: ({ children }) => (
-            <strong className="font-semibold text-ink-900">
+            <strong className="font-semibold text-foreground">
               {children}
             </strong>
           ),

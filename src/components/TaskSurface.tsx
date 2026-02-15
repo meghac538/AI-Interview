@@ -8,6 +8,7 @@ import { EmailThreadUI } from '@/components/rounds/EmailThreadUI'
 import { TextResponseUI } from '@/components/rounds/TextResponseUI'
 import { MultipleChoiceUI } from '@/components/rounds/MultipleChoiceUI'
 import { CodeEditorUI } from '@/components/rounds/CodeEditorUI'
+import { AgenticChatUI } from '@/components/rounds/AgenticChatUI'
 import type { Event, Round } from '@/lib/types/database'
 import { useMemo } from 'react'
 
@@ -115,6 +116,7 @@ export function TaskSurface({ round, events }: { round: Round; events?: Event[] 
       {round.round_type === 'text' && <TextResponseUI round={round} />}
       {round.round_type === 'mcq' && <MultipleChoiceUI round={round} />}
       {round.round_type === 'code' && <CodeEditorUI round={round} />}
+      {round.round_type === 'agentic' && <AgenticChatUI round={round} />}
     </div>
   )
 }

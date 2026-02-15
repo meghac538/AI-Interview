@@ -198,19 +198,21 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig) {
             })
 
             // Publish to live_events
-            supabase
-              .from('live_events')
-              .insert({
-                session_id: config.sessionId,
-                event_type: 'voice_transcript',
-                payload: {
-                  role: 'assistant',
-                  text: message.message,
-                  timestamp: newItem.timestamp
-                }
-              })
+            void Promise.resolve(
+              supabase
+                .from('live_events')
+                .insert({
+                  session_id: config.sessionId,
+                  event_type: 'voice_transcript',
+                  payload: {
+                    role: 'assistant',
+                    text: message.message,
+                    timestamp: newItem.timestamp
+                  }
+                })
+            )
               .then(() => console.log('📝 Agent transcript published'))
-              .catch((err) => console.error('Failed to publish transcript:', err))
+              .catch((err: unknown) => console.error('Failed to publish transcript:', err))
           }
         }
       })
@@ -312,6 +314,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig) {
         const difficulty = command.payload.difficulty
 
         // Send context update via SDK
+        // @ts-expect-error - sendText exists at runtime but not in SDK types
         conversationRef.current.sendText(
           `[System note: Adjust your questioning style to difficulty level ${difficulty}. ${getDifficultyHint(difficulty)}]`
         )
@@ -322,6 +325,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig) {
         const label = command.payload.label || curveball
 
         // Inject curveball via SDK
+        // @ts-expect-error - sendText exists at runtime but not in SDK types
         conversationRef.current.sendText(getCurveballPrompt(curveball, label))
 
         console.log(`✅ Curveball injected: ${label}`)

@@ -1,10 +1,6 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase/server'
-import OpenAI from 'openai'
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-})
+import { getAIClient, mapModel } from '@/lib/ai/client'
 
 export async function POST(request: Request) {
   try {
@@ -23,8 +19,8 @@ export async function POST(request: Request) {
       .join('\n\n')
 
     // Call OpenAI to analyze the conversation
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o',
+    const completion = await getAIClient().chat.completions.create({
+      model: mapModel('gpt-4o'),
       messages: [
         {
           role: 'system',

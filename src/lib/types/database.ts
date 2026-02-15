@@ -2,7 +2,7 @@
 
 export type SessionStatus = 'scheduled' | 'live' | 'completed' | 'aborted'
 export type RoundStatus = 'pending' | 'active' | 'completed' | 'skipped'
-export type RoundType = 'voice' | 'email' | 'text' | 'code' | 'mcq' | 'voice-realtime'
+export type RoundType = 'voice' | 'email' | 'text' | 'code' | 'mcq' | 'voice-realtime' | 'agentic'
 export type CandidateStatus = 'applied' | 'pi_scheduled' | 'pi_passed' | 'live_scheduled' | 'live_completed' | 'rejected' | 'advanced'
 export type Track =
   | 'sales'

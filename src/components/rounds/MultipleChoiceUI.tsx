@@ -84,7 +84,7 @@ export function MultipleChoiceUI({ round }: { round: Round }) {
 
   if (!options.length) {
     return (
-      <div className="rounded-2xl border border-ink-100 bg-white px-4 py-3 text-sm text-ink-600">
+      <div className="rounded-2xl border bg-card px-4 py-3 text-sm text-muted-foreground">
         Multiple-choice options are missing for this round. Please notify the interviewer.
       </div>
     )
@@ -92,7 +92,7 @@ export function MultipleChoiceUI({ round }: { round: Round }) {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-2xl border border-ink-100 bg-white px-4 py-3 text-sm text-ink-600">
+      <div className="rounded-2xl border bg-card px-4 py-3 text-sm text-muted-foreground">
         Select the best answer. You can change your selection before submitting the round.
       </div>
 
@@ -107,34 +107,34 @@ export function MultipleChoiceUI({ round }: { round: Round }) {
               className={cn(
                 'w-full rounded-2xl border px-4 py-4 text-left transition',
                 isSelected
-                  ? 'border-skywash-400 bg-skywash-50 shadow-sm'
-                  : 'border-ink-100 bg-white hover:border-ink-200'
+                  ? 'border-primary bg-primary/5 shadow-sm'
+                  : 'border-border bg-card hover:border-primary/30'
               )}
             >
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <div className="text-xs uppercase tracking-[0.2em] text-ink-500">
+                  <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
                     Option {String.fromCharCode(65 + index)}
                   </div>
                   {option.label && (
-                    <div className="mt-2 text-sm font-semibold text-ink-900">
+                    <div className="mt-2 text-sm font-semibold text-foreground">
                       {option.label}
                     </div>
                   )}
                 </div>
                 {isSelected && (
-                  <span className="rounded-full bg-skywash-100 px-3 py-1 text-[11px] font-semibold uppercase text-skywash-700">
+                  <span className="rounded-full bg-primary/10 px-3 py-1 text-[11px] font-semibold uppercase text-primary">
                     Selected
                   </span>
                 )}
               </div>
 
               {option.description && (
-                <p className="mt-2 text-sm text-ink-600">{option.description}</p>
+                <p className="mt-2 text-sm text-muted-foreground">{option.description}</p>
               )}
 
               {option.code && (
-                <pre className="mt-3 overflow-auto rounded-xl bg-ink-50 p-3 text-xs text-ink-800">
+                <pre className="mt-3 overflow-auto rounded-xl bg-muted p-3 text-xs text-foreground">
                   <code className="font-mono">{option.code}</code>
                 </pre>
               )}
@@ -143,9 +143,9 @@ export function MultipleChoiceUI({ round }: { round: Round }) {
         })}
       </div>
 
-      <div className="flex items-center justify-between rounded-2xl border border-ink-100 bg-white px-4 py-3 text-xs text-ink-500">
+      <div className="flex items-center justify-between rounded-2xl border bg-card px-4 py-3 text-xs text-muted-foreground">
         <span>{selected ? `Selected: ${selected}` : 'No option selected yet.'}</span>
-        <span>{isSaving ? 'Saving selection…' : 'Selection autosaved'}</span>
+        <span>{isSaving ? 'Saving selection...' : 'Selection autosaved'}</span>
       </div>
     </div>
   )

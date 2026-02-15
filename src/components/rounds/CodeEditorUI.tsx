@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Textarea } from '@/components/ui/textarea'
-import { Select } from '@/components/ui/select'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useSession } from '@/contexts/SessionContext'
 import type { Round } from '@/lib/types/database'
 
@@ -73,21 +73,26 @@ export function CodeEditorUI({ round }: { round: Round }) {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-2xl border border-ink-100 bg-white px-4 py-3 text-sm text-ink-600">
+      <div className="rounded-2xl border bg-card px-4 py-3 text-sm text-muted-foreground">
         Use the editor below to write your solution. It will autosave as you type.
       </div>
 
       {languageOptions.length > 0 && (
         <div className="space-y-2">
-          <label className="text-xs font-semibold uppercase tracking-[0.2em] text-ink-500">
+          <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
             Language
           </label>
-          <Select value={language} onChange={(e) => handleLanguageChange(e.target.value)}>
-            {languageOptions.map((lang: string) => (
-              <option key={lang} value={lang}>
-                {lang}
-              </option>
-            ))}
+          <Select value={language} onValueChange={handleLanguageChange}>
+            <SelectTrigger>
+              <SelectValue placeholder="Select language" />
+            </SelectTrigger>
+            <SelectContent>
+              {languageOptions.map((lang: string) => (
+                <SelectItem key={lang} value={lang}>
+                  {lang}
+                </SelectItem>
+              ))}
+            </SelectContent>
           </Select>
         </div>
       )}
@@ -100,11 +105,11 @@ export function CodeEditorUI({ round }: { round: Round }) {
         className="min-h-[320px] font-mono text-xs"
       />
 
-      <div className="flex flex-wrap items-center justify-between rounded-2xl border border-ink-100 bg-white px-4 py-3 text-xs text-ink-500">
-        <span>Lines: {lineCount} • Characters: {code.length}</span>
+      <div className="flex flex-wrap items-center justify-between rounded-2xl border bg-card px-4 py-3 text-xs text-muted-foreground">
+        <span>Lines: {lineCount} &middot; Characters: {code.length}</span>
         <span>
           {isSaving
-            ? 'Saving…'
+            ? 'Saving...'
             : lastSavedAt
               ? `Saved at ${lastSavedAt.toLocaleTimeString()}`
               : 'Draft not saved yet'}
@@ -112,8 +117,8 @@ export function CodeEditorUI({ round }: { round: Round }) {
       </div>
 
       {round.config?.evaluation_focus && (
-        <div className="rounded-2xl border border-ink-100 bg-white px-4 py-3 text-sm text-ink-600">
-          <strong className="text-ink-800">Evaluation focus:</strong> {round.config.evaluation_focus}
+        <div className="rounded-2xl border bg-card px-4 py-3 text-sm text-muted-foreground">
+          <strong className="text-foreground">Evaluation focus:</strong> {round.config.evaluation_focus}
         </div>
       )}
     </div>

@@ -1,18 +1,6 @@
 import { NextResponse } from 'next/server'
-import OpenAI from 'openai'
 import { supabaseAdmin } from '@/lib/supabase/server'
-
-let openaiClient: OpenAI | null = null
-
-function getOpenAIClient() {
-  if (openaiClient) return openaiClient
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) {
-    throw new Error('OPENAI_API_KEY is not configured')
-  }
-  openaiClient = new OpenAI({ apiKey })
-  return openaiClient
-}
+import { getAIClient, mapModel } from '@/lib/ai/client'
 
 const PROSPECT_PERSONA = `You are a VP of Operations at a mid-market B2B SaaS company.
 
@@ -373,8 +361,8 @@ export async function POST(request: Request) {
     ]
 
     // Call OpenAI
-    const completion = await getOpenAIClient().chat.completions.create({
-      model: 'gpt-4o',
+    const completion = await getAIClient().chat.completions.create({
+      model: mapModel('gpt-4o'),
       messages: messages as any,
       temperature: 0.8,
       max_tokens: 200

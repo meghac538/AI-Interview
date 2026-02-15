@@ -1,17 +1,5 @@
-import OpenAI from 'openai'
 import { supabaseAdmin } from '@/lib/supabase/server'
-
-let openaiClient: OpenAI | null = null
-
-function getOpenAIClient() {
-  if (openaiClient) return openaiClient
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) {
-    throw new Error('OPENAI_API_KEY is not configured')
-  }
-  openaiClient = new OpenAI({ apiKey })
-  return openaiClient
-}
+import { getAIClient, mapModel } from '@/lib/ai/client'
 
 export interface ScoringDimension {
   name: string
@@ -107,8 +95,8 @@ Rules:
 - Return JSON: {"followups": ["Q1", "Q2", ...]}`
 
   try {
-    const completion = await getOpenAIClient().chat.completions.create({
-      model: 'gpt-4o',
+    const completion = await getAIClient().chat.completions.create({
+      model: mapModel('gpt-4o'),
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3,
       response_format: { type: 'json_object' },
@@ -170,8 +158,8 @@ Be strict and evidence-based. Only award points where there is clear evidence.
 If you cannot provide evidence, return score 0 and an empty evidence array.`
 
     try {
-      const completion = await getOpenAIClient().chat.completions.create({
-        model: 'gpt-4o',
+      const completion = await getAIClient().chat.completions.create({
+        model: mapModel('gpt-4o'),
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.3,
         response_format: { type: 'json_object' }

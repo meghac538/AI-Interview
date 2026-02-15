@@ -1,12 +1,8 @@
 import { NextResponse } from 'next/server'
-import OpenAI from 'openai'
 import crypto from 'crypto'
 import { supabaseAdmin } from '@/lib/supabase/server'
 import { fetchScopePackage, emitRedFlag } from '@/lib/db/helpers'
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-})
+import { getAIClient, mapModel } from '@/lib/ai/client'
 
 export async function POST(request: Request) {
   try {
@@ -179,8 +175,8 @@ Rules:
 Return JSON only:
 {"should_followup": true/false, "question": "..." }`
 
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o',
+    const completion = await getAIClient().chat.completions.create({
+      model: mapModel('gpt-4o'),
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3,
       response_format: { type: 'json_object' },
