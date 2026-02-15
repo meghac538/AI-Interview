@@ -2,7 +2,7 @@
 
 export type SessionStatus = 'scheduled' | 'live' | 'completed' | 'aborted'
 export type RoundStatus = 'pending' | 'active' | 'completed' | 'skipped'
-export type RoundType = 'voice' | 'email' | 'text' | 'code' | 'mcq'
+export type RoundType = 'voice' | 'email' | 'text' | 'code' | 'mcq' | 'voice-realtime'
 export type CandidateStatus = 'applied' | 'pi_scheduled' | 'pi_passed' | 'live_scheduled' | 'live_completed' | 'rejected' | 'advanced'
 export type Track =
   | 'sales'
@@ -189,7 +189,116 @@ export interface Artifact {
   created_at?: string
 }
 
-// Helper types
+// 12. Rippling Writebacks
+export interface RipplingWriteback {
+  id: string
+  candidate_id: string
+  action: 'note' | 'tag' | 'stage_move'
+  payload: Record<string, any>
+  status: 'queued' | 'sent' | 'failed'
+  error: string | null
+  created_at?: string
+}
+
+// 13. Personas (Voice Realtime)
+export interface Persona {
+  id: string
+  name: string
+  role: string
+  blueprint: 'sales' | 'agentic_eng' | 'fullstack' | 'marketing' | 'implementation' | 'HR' | 'security'
+  difficulty: number  // 1-5
+  company_context: string
+  personality_traits: string[]
+  communication_style: string
+  objection_patterns: string[]
+  prompt_template: string
+  first_message_template: string
+  is_active?: boolean
+  created_at?: string
+  updated_at?: string
+}
+
+// 14. Scenarios (Voice Realtime)
+export interface Scenario {
+  id: string
+  title: string
+  description: string
+  industry: string
+  company_size: string
+  pain_points: string[]
+  budget_range: string
+  decision_timeline: string
+  created_at?: string
+}
+
+// 15. Voice Commands (Interviewer Controls)
+export interface VoiceCommand {
+  id: string
+  session_id: string
+  command_type: 'difficulty_change' | 'curveball_inject'
+  payload: Record<string, any>
+  source?: 'manual' | 'ai_suggested'
+  created_at: string
+}
+
+// 16. AI Assessments (Silent Observations)
+export interface AIAssessment {
+  id: string
+  session_id: string
+  round_number: number
+  timestamp: string
+  observation: string
+  dimension: string
+  severity: 'info' | 'concern' | 'red_flag'
+  created_at?: string
+}
+
+// Voice Realtime Round Config
+export interface VoiceRealtimeRoundConfig {
+  persona_id?: string
+  scenario_id?: string
+  initial_difficulty?: number // 1-5
+  allow_curveballs?: boolean
+  curveball_pool?: string[]
+  voice?: 'ash' | 'coral' | 'sage' | 'cedar' | 'marin' | 'ballad'
+}
+
+// 17. Voice Transcripts (Voice Analytics)
+export interface VoiceTranscript {
+  id: string
+  session_id: string
+  round_number: number
+  role: 'user' | 'assistant'
+  text: string
+  timestamp: string
+  word_count: number | null
+  created_at?: string
+}
+
+// 18. Voice Analysis (Voice Analytics)
+export interface VoiceAnalysis {
+  id: string
+  session_id: string
+  round_number: number
+  analysis_type: 'say_meter' | 'suggestion'
+
+  // Say Meter fields
+  meter_score: number | null
+  meter_factors: Record<string, any>
+  meter_reasoning: string | null
+
+  // Suggestion fields
+  suggestion_text: string | null
+  suggestion_category: 'context_injection' | 'curveball' | 'followup_question' | null
+  priority: 'low' | 'medium' | 'high' | 'critical' | null
+
+  // Metadata
+  triggered_at: string
+  dismissed: boolean
+  created_at?: string
+}
+
+// Helper types for MVP (temporary)
 export interface SessionWithDetails extends InterviewSession {
   candidate?: Candidate
   job?: JobProfile

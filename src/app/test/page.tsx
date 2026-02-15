@@ -34,6 +34,8 @@ export default function TestPage() {
   const [candidateName, setCandidateName] = useState('Test Megha')
   const [role, setRole] = useState(ROLES[0].label)
   const [level, setLevel] = useState(ROLES[0].level)
+  const [track, setTrack] = useState('sales')
+  const [difficulty, setDifficulty] = useState(3)
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<any>(null)
   const [error, setError] = useState<string | null>(null)
@@ -50,7 +52,9 @@ export default function TestPage() {
         body: JSON.stringify({
           candidate_name: candidateName,
           role,
-          level
+          level,
+          track,
+          difficulty
         })
       })
 
@@ -121,6 +125,45 @@ export default function TestPage() {
               <option value="mid">Mid</option>
               <option value="senior">Senior</option>
             </select>
+          </div>
+
+          <div>
+            <label className="text-sm font-medium block mb-1">Track (Blueprint)</label>
+            <select
+              value={track}
+              onChange={(e) => setTrack(e.target.value)}
+              className="w-full px-3 py-2 border rounded-md"
+            >
+              <option value="sales">Sales</option>
+              <option value="agentic_eng">Agentic Engineering</option>
+              <option value="fullstack">Fullstack</option>
+              <option value="marketing">Marketing</option>
+              <option value="implementation">Implementation</option>
+              <option value="HR">HR</option>
+              <option value="security">Security</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="text-sm font-medium block mb-1">
+              Difficulty Level
+              <span className="ml-2 text-xs text-ink-500">
+                ({difficulty}/5 - {difficulty === 1 ? '🟢 Easy' : difficulty === 2 ? '🟡 Mild' : difficulty === 3 ? '🟠 Moderate' : difficulty === 4 ? '🔴 Hard' : '⚫ Adversarial'})
+              </span>
+            </label>
+            <input
+              type="range"
+              min="1"
+              max="5"
+              value={difficulty}
+              onChange={(e) => setDifficulty(parseInt(e.target.value))}
+              className="w-full accent-skywash-500"
+            />
+            <div className="flex justify-between text-xs text-ink-500 mt-1">
+              <span>Easy</span>
+              <span>Moderate</span>
+              <span>Adversarial</span>
+            </div>
           </div>
 
           <Button

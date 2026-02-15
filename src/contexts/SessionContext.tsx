@@ -11,6 +11,7 @@ interface SessionContextValue {
   currentRound: Round | null
   scores: Score[]
   events: Event[]
+  assessments: any[]
   loading: boolean
 }
 

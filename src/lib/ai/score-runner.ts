@@ -14,11 +14,28 @@ export async function runScoringForArtifact(artifactId: string) {
 
   const scopePackage = await fetchScopePackage(artifact.session_id)
 
-  const content = artifact.content || artifact.metadata?.content || ''
-  const roundNumber = artifact.round_number ?? artifact.metadata?.round_number
+  // Support both metadata-based and direct column-based artifacts
+  const rawContent = artifact.metadata?.content ?? artifact.content ?? ''
+  const roundNumber = artifact.metadata?.round_number ?? artifact.round_number
 
   if (!roundNumber) {
     throw new Error('Artifact round number missing')
+  }
+
+  // Convert transcript JSONB to string format (including voice format)
+  let contentString: string
+  if (typeof rawContent === 'string') {
+    contentString = rawContent
+  } else if (rawContent?.items && Array.isArray(rawContent.items)) {
+    // Voice transcript format: { items: [{ role, text, timestamp }] }
+    contentString = rawContent.items
+      .map((item: any) => {
+        const speaker = item.role === 'user' ? 'Candidate' : 'Prospect'
+        return `${speaker}: ${item.text}`
+      })
+      .join('\n\n')
+  } else {
+    contentString = rawContent ? JSON.stringify(rawContent) : ''
   }
 
   const round = scopePackage.round_plan.find((r: any) => r.round_number === roundNumber)
@@ -27,16 +44,19 @@ export async function runScoringForArtifact(artifactId: string) {
     throw new Error('Round not found in scope package')
   }
 
+  const dimensions = getDimensionsForRound(round)
+  const track = scopePackage.track || ''
+
   // Handle empty/very short content: emit red flag and return early with zero score
-  const wordCount = String(content).trim().split(/\s+/).filter(Boolean).length
-  if (!content || wordCount < 3) {
+  const wordCount = String(contentString).trim().split(/\s+/).filter(Boolean).length
+  if (!contentString || wordCount < 3) {
     await emitRedFlag(artifact.session_id, {
       flag_type: 'insufficient_response',
       severity: 'warning',
-      description: content ? 'Response too short to evaluate' : 'No response submitted',
+      description: contentString ? 'Response too short to evaluate' : 'No response submitted',
       auto_stop: false,
       round_number: roundNumber,
-      evidence: content ? [{ quote: String(content).slice(0, 120) }] : [],
+      evidence: contentString ? [{ quote: String(contentString).slice(0, 120) }] : [],
     })
 
     await supabaseAdmin.from('scores').insert({
@@ -44,7 +64,7 @@ export async function runScoringForArtifact(artifactId: string) {
       round: roundNumber,
       overall_score: 0,
       dimension_scores: {},
-      red_flags: [{ flag_type: 'insufficient_response', severity: 'warning', description: content ? 'Response too short' : 'No response' }],
+      red_flags: [{ flag_type: 'insufficient_response', severity: 'warning', description: contentString ? 'Response too short' : 'No response' }],
       confidence: 0,
       evidence_quotes: [],
       recommendation: 'stop',
@@ -61,15 +81,11 @@ export async function runScoringForArtifact(artifactId: string) {
     return { results: [], overall_score: 0 }
   }
 
-  const dimensions = getDimensionsForRound(round)
-
-  const track = scopePackage.track || ''
-
   const results = await scoreArtifact(
     artifact.session_id,
     roundNumber,
     artifact.id,
-    content,
+    contentString,
     dimensions,
     track
   )
@@ -114,13 +130,12 @@ export async function runScoringForArtifact(artifactId: string) {
   // Build red flags locally (stored in scores.red_flags jsonb column)
   const redFlags: Array<{ flag_type: string; severity: string; description: string; evidence?: any[] }> = []
 
-  // wordCount >= 3 guaranteed (early return above handles < 3)
   if (wordCount < 5) {
     redFlags.push({
       flag_type: 'insufficient_response',
       severity: 'high',
       description: 'Response too short to evaluate reliably',
-      evidence: [{ quote: String(content).slice(0, 120), timestamp: 'n/a' }]
+      evidence: [{ quote: String(contentString).slice(0, 120), timestamp: 'n/a' }]
     })
   }
 
@@ -163,27 +178,22 @@ export async function runScoringForArtifact(artifactId: string) {
         : 'stop'
 
   const followups = await generateFollowups(
-    content,
+    contentString,
     dimensionScores,
     evidenceQuotes.map((item) => ({ dimension: item.dimension, quote: item.quote }))
   )
 
   await supabaseAdmin.from('scores').insert({
     session_id: artifact.session_id,
-    round: round.round_number,
+    round_number: round.round_number,
     overall_score: overallScore,
     dimension_scores: dimensionScores,
-    red_flags: redFlags || [],
-    confidence,
-    evidence_quotes: evidenceQuotes,
-    recommendation,
-    recommended_followups: followups
+    recommendation
   })
 
   await supabaseAdmin.from('live_events').insert({
     session_id: artifact.session_id,
     event_type: 'scoring_completed',
-    actor: 'system',
     payload: {
       artifact_id: artifact.id,
       round_number: round.round_number,

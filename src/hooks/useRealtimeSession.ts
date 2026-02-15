@@ -8,6 +8,7 @@ export function useRealtimeSession(sessionId: string) {
   const [rounds, setRounds] = useState<Round[]>([])
   const [scores, setScores] = useState<Score[]>([])
   const [events, setEvents] = useState<Event[]>([])
+  const [assessments, setAssessments] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
   // Initial fetch
@@ -22,6 +23,7 @@ export function useRealtimeSession(sessionId: string) {
         setRounds(data.scopePackage?.round_plan || [])
         setScores(data.scores || [])
         setEvents(data.events || [])
+        setAssessments(data.assessments || [])
       }
       setLoading(false)
     }
@@ -121,13 +123,33 @@ export function useRealtimeSession(sessionId: string) {
       )
       .subscribe()
 
+    // Subscribe to AI assessments (ai_assessments table)
+    const assessmentsChannel = supabase
+      .channel(`assessments:${sessionId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'ai_assessments',
+          filter: `session_id=eq.${sessionId}`
+        },
+        (payload) => {
+          if (payload.new) {
+            setAssessments((prev) => [payload.new, ...prev])
+          }
+        }
+      )
+      .subscribe()
+
     return () => {
       sessionChannel.unsubscribe()
       scopeChannel.unsubscribe()
       scoresChannel.unsubscribe()
       eventsChannel.unsubscribe()
+      assessmentsChannel.unsubscribe()
     }
   }, [sessionId])
 
-  return { session, scopePackage, rounds, scores, events, loading }
+  return { session, scopePackage, rounds, scores, events, assessments, loading }
 }
