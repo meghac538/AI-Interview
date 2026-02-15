@@ -36,6 +36,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# supabase CLI temp files
+supabase/.temp/
+
 # IDE
 .vscode/
 .idea/
@@ -46,3 +49,5 @@ next-env.d.ts
 # OS
 .DS_Store
 Thumbs.db
+
+.CLAUDE.md

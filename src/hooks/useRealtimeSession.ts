@@ -9,11 +9,12 @@ export function useRealtimeSession(sessionId: string) {
   const [scores, setScores] = useState<Score[]>([])
   const [events, setEvents] = useState<Event[]>([])
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
+  const [assessments, setAssessments] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
   const refresh = useCallback(async () => {
     if (!sessionId) return
-    const response = await fetch(`/api/session/${sessionId}`)
+    const response = await fetch(`/api/session/${sessionId}`, { cache: 'no-store' })
     if (response.ok) {
       const data = await response.json()
 
@@ -23,6 +24,7 @@ export function useRealtimeSession(sessionId: string) {
       setScores(data.scores || [])
       setEvents(data.events || [])
       setArtifacts(data.artifacts || [])
+      setAssessments(data.assessments || [])
     }
     setLoading(false)
   }, [sessionId])
@@ -53,7 +55,6 @@ export function useRealtimeSession(sessionId: string) {
   useEffect(() => {
     if (!sessionId) return
 
-    // Subscribe to session updates (interview_sessions table)
     const sessionChannel = supabase
       .channel(`session:${sessionId}`)
       .on(
@@ -66,13 +67,12 @@ export function useRealtimeSession(sessionId: string) {
         },
         (payload) => {
           if (payload.new) {
-            setSession(payload.new as InterviewSession)
+            setSession((prev) => prev ? { ...prev, ...payload.new as InterviewSession } : payload.new as InterviewSession)
           }
         }
       )
       .subscribe()
 
-    // Subscribe to scope package updates (contains round_plan)
     const scopeChannel = supabase
       .channel(`scope:${sessionId}`)
       .on(
@@ -93,7 +93,6 @@ export function useRealtimeSession(sessionId: string) {
       )
       .subscribe()
 
-    // Subscribe to scores updates
     const scoresChannel = supabase
       .channel(`scores:${sessionId}`)
       .on(
@@ -121,7 +120,6 @@ export function useRealtimeSession(sessionId: string) {
       )
       .subscribe()
 
-    // Subscribe to events (live_events table)
     const eventsChannel = supabase
       .channel(`events:${sessionId}`)
       .on(
@@ -140,13 +138,32 @@ export function useRealtimeSession(sessionId: string) {
       )
       .subscribe()
 
+    const assessmentsChannel = supabase
+      .channel(`assessments:${sessionId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'ai_assessments',
+          filter: `session_id=eq.${sessionId}`
+        },
+        (payload) => {
+          if (payload.new) {
+            setAssessments((prev) => [payload.new, ...prev])
+          }
+        }
+      )
+      .subscribe()
+
     return () => {
       sessionChannel.unsubscribe()
       scopeChannel.unsubscribe()
       scoresChannel.unsubscribe()
       eventsChannel.unsubscribe()
+      assessmentsChannel.unsubscribe()
     }
   }, [sessionId])
 
-  return { session, scopePackage, rounds, scores, events, artifacts, loading, refresh }
+  return { session, scopePackage, rounds, scores, events, artifacts, assessments, loading, refresh }
 }

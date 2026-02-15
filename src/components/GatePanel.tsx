@@ -1,3 +1,5 @@
+'use client'
+
 import { AlertTriangle, CheckCircle2, Slash, ShieldAlert, TrendingUp } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -5,11 +7,21 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Progress } from "@/components/ui/progress"
 import { Input } from "@/components/ui/input"
 
+export interface RedFlagEntry {
+  label: string;
+  detail?: string;
+  source?: string;
+  severity?: 'critical' | 'warning';
+  auto_stop?: boolean;
+  created_at?: string;
+}
+
 export interface GatePanelProps {
   overall?: number
   confidence?: number
   dimensions?: Array<{ label: string; score: number; max?: number }>
-  redFlags?: Array<{ label: string; detail?: string }>
+  redFlags?: RedFlagEntry[]
+  truthLog?: Array<{ dimension: string; quote: string; line?: number }>
   followups?: string[]
   onDecision?: (decision: "proceed" | "caution" | "stop") => void
   onAction?: (action: "escalate") => void
@@ -21,6 +33,7 @@ export function GatePanel({
   confidence,
   dimensions,
   redFlags,
+  truthLog,
   followups,
   onDecision,
   onAction,
@@ -31,6 +44,7 @@ export function GatePanel({
     confidence: confidence ?? 0,
     dimensions: dimensions ?? [],
     redFlags: redFlags ?? [],
+    truthLog: truthLog ?? [],
     followups: followups ?? []
   }
 
@@ -84,7 +98,18 @@ export function GatePanel({
         </div>
 
         <div className="space-y-3">
-          <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Red Flags</p>
+          <div className="flex items-center gap-2">
+            <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Red Flags</p>
+            {resolved.redFlags.length > 0 && (
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                resolved.redFlags.some(f => f.severity === 'critical')
+                  ? 'bg-destructive/20 text-destructive'
+                  : 'bg-amber-200 text-amber-800'
+              }`}>
+                {resolved.redFlags.length}
+              </span>
+            )}
+          </div>
           {resolved.redFlags.length === 0 && (
             <div className="rounded-lg border border-emerald-400/40 bg-emerald-500/10 p-3 text-sm">
               <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
@@ -93,13 +118,71 @@ export function GatePanel({
               </div>
             </div>
           )}
-          {resolved.redFlags.map((flag) => (
-            <div key={flag.label} className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm">
-              <div className="flex items-center gap-2 font-medium text-destructive">
-                <AlertTriangle className="h-4 w-4" />
-                {flag.label}
-              </div>
-              {flag.detail && <p className="mt-1 text-xs text-muted-foreground">{flag.detail}</p>}
+          <div className="max-h-[280px] space-y-3 overflow-y-auto pr-1">
+            {resolved.redFlags.map((flag, index) => {
+              const isCritical = flag.severity === 'critical'
+              return (
+                <div
+                  key={`${flag.label}-${index}`}
+                  className={`rounded-lg border p-3 text-sm ${
+                    isCritical
+                      ? 'border-destructive/50 bg-destructive/10 animate-pulse'
+                      : 'border-destructive/30 bg-destructive/10'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 font-medium text-destructive">
+                    <AlertTriangle className="h-4 w-4 shrink-0" />
+                    {flag.label}
+                    {flag.auto_stop && (
+                      <span className="ml-auto rounded-full bg-destructive/20 px-2 py-0.5 text-[10px] font-semibold text-destructive">
+                        AUTO-STOP
+                      </span>
+                    )}
+                  </div>
+                  {flag.detail && (
+                    <p className="mt-1 text-xs text-muted-foreground">{flag.detail}</p>
+                  )}
+                  <div className="mt-2 flex items-center gap-2">
+                    {flag.source && (
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                        flag.source === 'interviewer'
+                          ? 'bg-sky-100 text-sky-700 dark:bg-sky-900 dark:text-sky-300'
+                          : 'bg-muted text-muted-foreground'
+                      }`}>
+                        {flag.source === 'interviewer' ? 'Interviewer' : 'System'}
+                      </span>
+                    )}
+                    {flag.created_at && (
+                      <span className="text-[10px] text-muted-foreground">
+                        {new Date(flag.created_at).toLocaleTimeString()}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+            TruthLog Evidence
+          </p>
+          {resolved.truthLog.length === 0 && (
+            <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
+              Evidence quotes will appear after scoring.
+            </div>
+          )}
+          {resolved.truthLog.map((entry, index) => (
+            <div
+              key={`${entry.dimension}-${index}`}
+              className="rounded-lg border bg-muted/20 px-4 py-3 text-sm"
+            >
+              <div className="text-xs font-semibold text-muted-foreground">{entry.dimension}</div>
+              <p className="mt-2">&ldquo;{entry.quote}&rdquo;</p>
+              {entry.line !== undefined && entry.line !== null && (
+                <p className="mt-1 text-xs text-muted-foreground">Line {entry.line}</p>
+              )}
             </div>
           ))}
         </div>

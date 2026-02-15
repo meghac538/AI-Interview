@@ -1,6 +1,7 @@
 import type { Metadata } from "next"
 import { Inter } from "next/font/google"
 import "./globals.css"
+import "./markdown-highlight.css"
 import { GlassFooter } from "@/components/glass-footer"
 import { ThemeProvider } from "@/components/theme-provider"
 

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase/server'
+import { runScoringForArtifact } from '@/lib/ai/score-runner'
 
 export async function POST(request: Request) {
   try {
@@ -13,18 +14,16 @@ export async function POST(request: Request) {
       )
     }
 
-    // Insert artifact (store content in metadata for MVP)
+    // Insert artifact with content + round_number as proper columns
     const { data: artifact, error } = await supabaseAdmin
       .from('artifacts')
       .insert({
         session_id,
         artifact_type,
-        url: '', // Empty for text-based artifacts in MVP
-        metadata: {
-          ...metadata,
-          content, // Store content here for MVP
-          round_number // Store round reference here
-        }
+        url: '',
+        content,
+        round_number,
+        metadata: metadata || {}
       })
       .select()
       .single()
@@ -39,8 +38,27 @@ export async function POST(request: Request) {
       payload: { artifact_id: artifact.id, artifact_type, round_number }
     })
 
-    // TODO: Trigger scoring (will be implemented in Phase 5)
-    // await triggerScoring(artifact)
+    if (artifact_type === 'followup_answer' && metadata?.question_id) {
+      await supabaseAdmin.from('live_events').insert({
+        session_id,
+        event_type: 'followup_answer',
+        actor: 'candidate',
+        payload: {
+          round_number,
+          question_id: metadata.question_id,
+          question: metadata.question || null,
+          answer: String(content).slice(0, 2000)
+        }
+      })
+    }
+
+    // Only trigger scoring for final (non-draft) submissions like followup answers.
+    // Draft auto-saves from TextResponseUI are scored at round completion time instead.
+    if (!metadata?.draft) {
+      runScoringForArtifact(artifact.id).catch((err) => {
+        console.error('Background scoring error for artifact', artifact.id, err)
+      })
+    }
 
     return NextResponse.json(artifact)
   } catch (error: any) {

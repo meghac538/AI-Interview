@@ -9,6 +9,31 @@ export async function POST(
     const { id } = await params
     const payload = await request.json().catch(() => ({}));
 
+    // Mark all active/pending rounds as skipped
+    const { data: scopePackage } = await supabaseAdmin
+      .from("interview_scope_packages")
+      .select("*")
+      .eq("session_id", id)
+      .single();
+
+    if (scopePackage) {
+      const roundPlan = (scopePackage.round_plan || []) as Array<Record<string, any>>;
+      let modified = false;
+      for (const round of roundPlan) {
+        if (round.status === "active" || round.status === "pending") {
+          round.status = "skipped";
+          round.completed_at = new Date().toISOString();
+          modified = true;
+        }
+      }
+      if (modified) {
+        await supabaseAdmin
+          .from("interview_scope_packages")
+          .update({ round_plan: roundPlan })
+          .eq("id", scopePackage.id);
+      }
+    }
+
     await supabaseAdmin
       .from("interview_sessions")
       .update({ status: "aborted" })

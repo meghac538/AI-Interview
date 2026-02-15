@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Check,
   Loader2,
+  Mic,
   Send,
   Sparkles,
   Wrench,
@@ -85,7 +86,9 @@ export function SidekickPanel({ role }: { role: string }) {
   const [isOpen, setIsOpen] = useState(false)
   const [isModelPickerOpen, setIsModelPickerOpen] = useState(false)
   const [pulseTab, setPulseTab] = useState(false)
+  const [isListening, setIsListening] = useState(false)
   const scrollAnchorRef = useRef<HTMLDivElement | null>(null)
+  const recognitionRef = useRef<any>(null)
 
   useEffect(() => {
     const handlePrefill = (event: Event) => {
@@ -132,6 +135,64 @@ export function SidekickPanel({ role }: { role: string }) {
 
     scrollAnchorRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
   }, [messages, loading, isOpen])
+
+  // Cleanup speech recognition on unmount
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop()
+        recognitionRef.current = null
+      }
+      if (typeof window !== 'undefined') {
+        window.speechSynthesis?.cancel()
+      }
+    }
+  }, [])
+
+  const toggleListening = () => {
+    if (typeof window === 'undefined') return
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SpeechRecognition) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: 'Voice input is not supported in this browser.',
+          createdAt: new Date().toISOString(),
+          model: 'system'
+        }
+      ])
+      return
+    }
+
+    if (isListening && recognitionRef.current) {
+      recognitionRef.current.stop()
+      return
+    }
+
+    const recognition = new SpeechRecognition()
+    recognition.lang = 'en-US'
+    recognition.interimResults = false
+    recognition.maxAlternatives = 1
+
+    recognition.onresult = (event: any) => {
+      const transcript = event.results?.[0]?.[0]?.transcript || ''
+      setDraft((prev) => (prev ? `${prev} ${transcript}` : transcript))
+    }
+
+    recognition.onerror = () => {
+      setIsListening(false)
+    }
+
+    recognition.onend = () => {
+      setIsListening(false)
+    }
+
+    recognitionRef.current = recognition
+    setIsListening(true)
+    recognition.start()
+  }
 
   const sendMessage = async () => {
     if (!draft.trim() || loading || !session) return
@@ -408,10 +469,21 @@ export function SidekickPanel({ role }: { role: string }) {
                         <p className="text-xs text-muted-foreground">
                           {queriesRemaining === null ? "Policy and query caps may apply." : `Queries remaining: ${queriesRemaining}`}
                         </p>
-                        <Button onClick={sendMessage} disabled={loading || !draft.trim()}>
-                          <Send className="h-4 w-4" />
-                          Send
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant={isListening ? "secondary" : "outline"}
+                            size="icon"
+                            onClick={toggleListening}
+                            disabled={loading}
+                            aria-label={isListening ? "Stop voice input" : "Start voice input"}
+                          >
+                            <Mic className={`h-4 w-4 ${isListening ? "animate-pulse" : ""}`} />
+                          </Button>
+                          <Button onClick={sendMessage} disabled={loading || !draft.trim()}>
+                            <Send className="h-4 w-4" />
+                            Send
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   </CardContent>

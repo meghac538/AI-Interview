@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useParams } from "next/navigation"
 import {
+  AlertTriangle,
   CheckCircle2,
   CircleDashed,
   ShieldCheck,
@@ -19,14 +20,205 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
+import { Textarea } from "@/components/ui/textarea"
+
+function AutoStopOverlay() {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/95 backdrop-blur-sm">
+      <div className="text-center space-y-4">
+        <div className="mx-auto h-10 w-10 animate-spin rounded-full border-b-2 border-primary" />
+        <p className="text-lg font-semibold">Session Ending</p>
+        <p className="text-sm text-muted-foreground">Please wait while we wrap up...</p>
+      </div>
+    </div>
+  )
+}
 
 function CandidateWorkspace() {
-  const { session, scopePackage, rounds, currentRound, loading } = useSession()
+  const { session, scopePackage, rounds, currentRound, events, loading } = useSession()
   const [timeLeft, setTimeLeft] = useState(0)
   const [endAt, setEndAt] = useState<number | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const autoSubmitFired = useRef(false)
+  const [followupAnswer, setFollowupAnswer] = useState('')
+  const [followupGateRound, setFollowupGateRound] = useState<number | null>(null)
+  const [forcedFollowupId, setForcedFollowupId] = useState<string | null>(null)
+  const [forcedFollowupQuestion, setForcedFollowupQuestion] = useState<string | null>(null)
+  const [serverFollowups, setServerFollowups] = useState<
+    Array<{ id: string; question: string; round_number?: number | null; source?: string }>
+  >([])
+  const [localFollowups, setLocalFollowups] = useState<
+    Array<{ question_id: string; question: string; round_number: number }>
+  >([])
+  const [localAnswers, setLocalAnswers] = useState<
+    Array<{ question_id: string; question: string; answer: string; round_number: number }>
+  >([])
 
+  const followupThread = useMemo(() => {
+    if (!currentRound) return []
+    const questions = (events || [])
+      .filter(
+        (event) =>
+          event.event_type === 'followup_question' &&
+          (event.payload?.round_number == null ||
+            Number(event.payload?.round_number) === currentRound.round_number)
+      )
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+
+    const manualQuestions = (events || [])
+      .filter(
+        (event) =>
+          event.event_type === 'interviewer_action' &&
+          event.payload?.action_type === 'manual_followup' &&
+          event.payload?.followup
+      )
+      .map((event) => ({
+        payload: {
+          question_id: event.payload?.question_id,
+          question: event.payload?.followup,
+          round_number: event.payload?.round_number ?? event.payload?.target_round
+        },
+        created_at: event.created_at
+      }))
+      .filter(
+        (event) =>
+          event.payload?.round_number == null ||
+          Number(event.payload?.round_number) === currentRound.round_number
+      )
+
+    const answers = (events || [])
+      .filter(
+        (event) =>
+          event.event_type === 'followup_answer' &&
+          (event.payload?.round_number == null ||
+            Number(event.payload?.round_number) === currentRound.round_number)
+      )
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+
+    const localQuestions = localFollowups
+      .filter((item) => Number(item.round_number) === currentRound.round_number)
+      .map((item) => ({
+        payload: {
+          question_id: item.question_id,
+          question: item.question
+        },
+        created_at: new Date().toISOString()
+      }))
+
+    const serverQuestions = serverFollowups
+      .filter(
+        (item) =>
+          item.round_number == null ||
+          Number(item.round_number) === currentRound.round_number
+      )
+      .map((item) => ({
+        payload: {
+          question_id: item.id,
+          question: item.question
+        },
+        created_at: new Date().toISOString()
+      }))
+
+    const localAnswerEvents = localAnswers
+      .filter((item) => Number(item.round_number) === currentRound.round_number)
+      .map((item) => ({
+        payload: {
+          question_id: item.question_id,
+          answer: item.answer
+        },
+        created_at: new Date().toISOString()
+      }))
+
+    const allQuestions = [
+      ...localQuestions,
+      ...serverQuestions,
+      ...manualQuestions,
+      ...questions
+    ].reduce((acc, item) => {
+      const id = item.payload?.question_id
+      if (!id || acc.some((q) => q.payload?.question_id === id)) return acc
+      acc.push(item)
+      return acc
+    }, [] as Array<{ payload?: Record<string, any>; created_at: string; [key: string]: any }>)
+
+    const allAnswers = [...answers, ...localAnswerEvents]
+
+    const answerMap = new Map<string, string>()
+    for (const answer of allAnswers) {
+      if (answer.payload?.question_id) {
+        answerMap.set(answer.payload.question_id, answer.payload?.answer || '')
+      }
+    }
+
+    return allQuestions.map((question) => ({
+      id: question.payload?.question_id,
+      question:
+        forcedFollowupId &&
+        forcedFollowupQuestion &&
+        question.payload?.question_id === forcedFollowupId
+          ? forcedFollowupQuestion
+          : question.payload?.question || '',
+      answered: answerMap.has(question.payload?.question_id),
+      answer: answerMap.get(question.payload?.question_id)
+    }))
+  }, [
+    events,
+    currentRound,
+    localFollowups,
+    localAnswers,
+    forcedFollowupId,
+    forcedFollowupQuestion,
+    serverFollowups
+  ])
+
+  const autoStopTriggered = useMemo(() => {
+    return (events || []).some(
+      (e: any) =>
+        e.event_type === 'auto_stop_triggered' ||
+        e.event_type === 'session_force_stopped'
+    )
+  }, [events])
+
+  const cautionCount = useMemo(() => {
+    return (events || []).filter(
+      (e: any) => e.event_type === 'red_flag_detected'
+    ).length
+  }, [events])
+
+  const pendingFollowup =
+    (forcedFollowupId
+      ? followupThread.find((item) => item.id === forcedFollowupId && !item.answered)
+      : null) ||
+    followupThread.find((item) => item.id && !item.answered)
+  const hasPendingFollowups = Boolean(pendingFollowup)
+  const showFollowups =
+    Boolean(followupGateRound && currentRound?.round_number === followupGateRound) ||
+    hasPendingFollowups
+
+  // Load follow-up thread
+  useEffect(() => {
+    if (!session?.id) return
+    const loadThread = async () => {
+      try {
+        const response = await fetch('/api/followup/thread', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: session.id })
+        })
+        if (response.ok) {
+          const data = await response.json()
+          if (Array.isArray(data?.thread)) {
+            setServerFollowups(data.thread)
+          }
+        }
+      } catch {
+        // Best-effort sync.
+      }
+    }
+    loadThread()
+  }, [session?.id])
+
+  // Auto-start first round
   useEffect(() => {
     const autoStartRound = async () => {
       if (
@@ -58,6 +250,7 @@ function CandidateWorkspace() {
     void autoStartRound()
   }, [session?.id, session?.status, currentRound?.round_number, currentRound?.status, currentRound?.duration_minutes])
 
+  // Sync timer with active round
   useEffect(() => {
     if (currentRound?.status === "active") {
       const durationMinutes = Number(currentRound.duration_minutes || 0)
@@ -71,6 +264,7 @@ function CandidateWorkspace() {
     }
   }, [currentRound?.round_number, currentRound?.status, currentRound?.duration_minutes, currentRound?.started_at])
 
+  // Timer countdown
   useEffect(() => {
     if (!endAt) return
 
@@ -90,8 +284,147 @@ function CandidateWorkspace() {
 
   const handleSubmit = async (auto = false) => {
     if (!session || !currentRound || submitting) return
-    setSubmitting(true)
 
+    // Auto-submit bypasses follow-up gating
+    if (auto) {
+      setSubmitting(true)
+      await fetch("/api/round/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: session.id,
+          round_number: currentRound.round_number
+        })
+      })
+
+      const nextRound = rounds.find((round) => round.round_number === currentRound.round_number + 1)
+      if (nextRound) {
+        await fetch("/api/round/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: session.id,
+            round_number: nextRound.round_number
+          })
+        })
+      }
+
+      setSubmitting(false)
+      setTimeLeft(0)
+      return
+    }
+
+    // Follow-up gating
+    if (hasPendingFollowups) return
+
+    try {
+      const pendingResponse = await fetch('/api/followup/pending', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: session.id,
+          round_number: currentRound.round_number
+        })
+      })
+      if (pendingResponse.ok) {
+        const data = await pendingResponse.json()
+        if (data.pending && data.question_id && data.question) {
+          setLocalFollowups((prev) => {
+            if (prev.some((item) => item.question_id === data.question_id)) return prev
+            return [
+              ...prev,
+              {
+                question_id: data.question_id,
+                question: data.question,
+                round_number: currentRound.round_number
+              }
+            ]
+          })
+          setForcedFollowupId(data.question_id)
+          setForcedFollowupQuestion(data.question)
+          setFollowupGateRound(currentRound.round_number)
+          return
+        }
+      }
+    } catch {
+      // Best-effort check
+    }
+
+    try {
+      const threadResponse = await fetch('/api/followup/thread', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: session.id })
+      })
+      if (threadResponse.ok) {
+        const data = await threadResponse.json()
+        const thread = Array.isArray(data?.thread) ? data.thread : []
+        const unanswered = thread.filter(
+          (item: any) =>
+            (item.round_number == null ||
+              Number(item.round_number) === currentRound.round_number) &&
+            !item.answered
+        )
+        const manual = unanswered.find((item: any) => item.source === 'manual')
+        const pending = manual || unanswered[0]
+        if (pending?.id && pending?.question) {
+          setLocalFollowups((prev) => {
+            if (prev.some((item) => item.question_id === pending.id)) return prev
+            return [
+              ...prev,
+              {
+                question_id: pending.id,
+                question: pending.question,
+                round_number: currentRound.round_number
+              }
+            ]
+          })
+          setForcedFollowupId(pending.id)
+          setForcedFollowupQuestion(pending.question)
+          setFollowupGateRound(currentRound.round_number)
+          return
+        }
+      }
+    } catch {
+      // Best-effort thread check
+    }
+
+    if (followupThread.length > 0) {
+      setFollowupGateRound(currentRound.round_number)
+      return
+    }
+
+    const followupResponse = await fetch('/api/followup/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: session.id,
+        round_number: currentRound.round_number
+      })
+    })
+
+    if (followupResponse.ok) {
+      const data = await followupResponse.json()
+      if (data.generated) {
+        if (data.question_id && data.question) {
+          setLocalFollowups((prev) => {
+            if (prev.some((item) => item.question_id === data.question_id)) return prev
+            return [
+              ...prev,
+              {
+                question_id: data.question_id,
+                question: data.question,
+                round_number: currentRound.round_number
+              }
+            ]
+          })
+        }
+        return
+      }
+    }
+
+    // Complete current round
+    setSubmitting(true)
     await fetch("/api/round/complete", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -115,10 +448,43 @@ function CandidateWorkspace() {
     }
 
     setSubmitting(false)
+  }
 
-    if (auto) {
-      setTimeLeft(0)
+  const submitFollowupAnswer = async () => {
+    if (!pendingFollowup || !session || !currentRound) return
+    if (!followupAnswer.trim()) return
+
+    await fetch('/api/artifact/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: session.id,
+        round_number: currentRound.round_number,
+        artifact_type: 'followup_answer',
+        content: followupAnswer.trim(),
+        metadata: {
+          question_id: pendingFollowup.id,
+          question: pendingFollowup.question
+        }
+      })
+    })
+
+    if (pendingFollowup?.id && pendingFollowup.question) {
+      setLocalAnswers((prev) => [
+        ...prev,
+        {
+          question_id: pendingFollowup.id,
+          question: pendingFollowup.question,
+          answer: followupAnswer.trim(),
+          round_number: currentRound.round_number
+        }
+      ])
     }
+    if (forcedFollowupId && pendingFollowup?.id === forcedFollowupId) {
+      setForcedFollowupId(null)
+      setForcedFollowupQuestion(null)
+    }
+    setFollowupAnswer('')
   }
 
   const formattedTime = useMemo(() => {
@@ -153,6 +519,10 @@ function CandidateWorkspace() {
     )
   }
 
+  if (autoStopTriggered) {
+    return <AutoStopOverlay />
+  }
+
   const currentRoundNumber = currentRound.round_number || 1
   const progress = ((currentRoundNumber - 1) / Math.max(rounds.length, 1)) * 100
 
@@ -177,6 +547,19 @@ function CandidateWorkspace() {
             <ThemeToggle />
           </div>
         </header>
+
+        {/* Caution banner — visible when any red flag is detected */}
+        {cautionCount > 0 && !autoStopTriggered && (
+          <div className="flex items-center gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-5 py-3">
+            <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" />
+            <div>
+              <p className="text-sm font-semibold text-amber-800 dark:text-amber-400">Caution noted</p>
+              <p className="text-xs text-amber-700 dark:text-amber-300">
+                The interviewer has noted a concern with your response. Please review your answer carefully and ensure accuracy.
+              </p>
+            </div>
+          </div>
+        )}
 
         <div className="grid gap-7 xl:grid-cols-[360px_minmax(0,1fr)] 2xl:gap-10">
           <aside className="order-2 xl:order-none">
@@ -245,7 +628,50 @@ function CandidateWorkspace() {
 
               <CardContent className="relative z-10 px-7 pb-6 md:px-10">
                 <div className="rounded-2xl border border-border/60 bg-background/35 p-6 backdrop-blur md:p-8">
-                  <TaskSurface round={currentRound} />
+                  {/* Follow-up thread */}
+                  {showFollowups && followupThread.length > 0 && (
+                    <div className="mb-6 space-y-3 rounded-2xl border p-4">
+                      <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                        Follow-up Thread
+                      </div>
+                      <div className="space-y-3 text-sm">
+                        {followupThread.map((item) => (
+                          <div key={item.id} className="rounded-2xl bg-muted/30 px-4 py-3">
+                            <p className="font-semibold">Q: {item.question}</p>
+                            {item.answered ? (
+                              <p className="mt-2 text-muted-foreground">A: {item.answer}</p>
+                            ) : (
+                              <p className="mt-2 text-muted-foreground">Awaiting your response.</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Pending follow-up answer */}
+                  {showFollowups && hasPendingFollowups && (
+                    <div className="mb-6 space-y-3 rounded-2xl border border-primary/30 bg-primary/5 px-4 py-4">
+                      <div className="text-sm font-semibold">Answer the follow-up</div>
+                      <p className="text-sm text-muted-foreground">{pendingFollowup?.question}</p>
+                      <Textarea
+                        rows={5}
+                        placeholder="Write your response to the follow-up question..."
+                        value={followupAnswer}
+                        onChange={(e) => setFollowupAnswer(e.target.value)}
+                      />
+                      <div className="flex items-center gap-3">
+                        <Button size="sm" onClick={submitFollowupAnswer} disabled={!followupAnswer.trim()}>
+                          Submit follow-up
+                        </Button>
+                        <span className="text-xs text-muted-foreground">
+                          You must answer follow-ups before proceeding.
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  <TaskSurface round={currentRound} events={events} />
                 </div>
               </CardContent>
 
@@ -255,7 +681,12 @@ function CandidateWorkspace() {
                   Responses are evaluated live and auto-submitted when timer expires.
                 </div>
 
-                <Button onClick={() => handleSubmit(false)} disabled={submitting} size="lg" className="min-w-44 rounded-2xl">
+                <Button
+                  onClick={() => handleSubmit(false)}
+                  disabled={submitting || hasPendingFollowups}
+                  size="lg"
+                  className="min-w-44 rounded-2xl"
+                >
                   <CheckCircle2 className="h-4 w-4" />
                   {submitting ? "Submitting..." : "Submit & Next"}
                 </Button>

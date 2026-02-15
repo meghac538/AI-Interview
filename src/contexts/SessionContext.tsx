@@ -12,6 +12,7 @@ interface SessionContextValue {
   scores: Score[]
   events: Event[]
   artifacts: Artifact[]
+  assessments: any[]
   loading: boolean
   refresh: () => Promise<void>
 }
@@ -27,7 +28,6 @@ export function SessionProvider({
 }) {
   const data = useRealtimeSession(sessionId)
 
-  // Find current round: active round, or first pending round, or first round
   const currentRound =
     data.rounds.find((r) => r.status === 'active') ||
     data.rounds.find((r) => r.status === 'pending') ||

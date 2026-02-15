@@ -29,13 +29,13 @@ export function VoiceCallUI({ round }: { round: Round }) {
   })
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  if (!session) return null
-
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
   }, [messages, loading])
+
+  if (!session) return null
 
   const startChat = async () => {
     setChatActive(true)

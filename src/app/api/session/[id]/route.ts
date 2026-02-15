@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase/server'
+import { extractResumeSkills, computeInterviewLevel } from '@/lib/db/helpers'
+
+export const dynamic = 'force-dynamic'
 
 export async function GET(
   request: Request,
@@ -31,6 +34,23 @@ export async function GET(
       .eq('id', session.job_id)
       .single()
 
+    // Get latest PI screening data
+    const { data: piScreenings, error: piError } = await supabaseAdmin
+      .from('pi_screenings')
+      .select('*')
+      .eq('candidate_id', session.candidate_id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+
+    if (piError) {
+      console.warn('PI screenings query failed:', piError.message)
+    }
+    const latestPi = piScreenings?.[0] || null
+
+    const piScore = latestPi?.pi_score_overall
+    const interviewLevel = computeInterviewLevel(jobProfile?.level_band, piScore, jobProfile?.experience_years_max)
+    const resumeSkills = extractResumeSkills(latestPi?.resume_analysis)
+
     // Get scope package (contains round_plan)
     const { data: scopePackage, error: scopeError } = await supabaseAdmin
       .from('interview_scope_packages')
@@ -49,7 +69,7 @@ export async function GET(
       .select('*')
       .eq('session_id', sessionId)
       .order('created_at', { ascending: false })
-      .limit(20)
+      .limit(1000)
 
     // Get current scores
     const { data: scores } = await supabaseAdmin
@@ -70,13 +90,24 @@ export async function GET(
       session: {
         ...session,
         candidate, // Add populated candidate
-        job: jobProfile // Add populated job profile
+        job: jobProfile, // Add populated job profile
+        candidate_insights: {
+          pi_score_overall: piScore ?? null,
+          pass_fail: latestPi?.pass_fail ?? null,
+          resume_skills: resumeSkills,
+          interview_level: interviewLevel
+        }
       },
       scopePackage,
       rounds,
       events,
       scores,
       artifacts: artifacts || []
+    }, 
+    {
+      headers: {
+        'Cache-Control': 'no-store, max-age=0'
+      }
     })
   } catch (error: any) {
     console.error('Session fetch error:', error)

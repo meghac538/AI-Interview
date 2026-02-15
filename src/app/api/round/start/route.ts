@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase/server'
+import { fetchScopePackage } from '@/lib/db/helpers'
 
 export async function POST(request: Request) {
   try {
@@ -12,14 +13,7 @@ export async function POST(request: Request) {
       )
     }
 
-    // Get scope package
-    const { data: scopePackage, error: scopeError } = await supabaseAdmin
-      .from('interview_scope_packages')
-      .select('*')
-      .eq('session_id', session_id)
-      .single()
-
-    if (scopeError) throw scopeError
+    const scopePackage = await fetchScopePackage(session_id)
 
     // Update round in round_plan
     const updatedRoundPlan = scopePackage.round_plan.map((round: any) =>

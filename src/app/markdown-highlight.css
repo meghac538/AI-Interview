@@ -1,0 +1,106 @@
+/**
+ * Custom syntax highlighting theme for highlight.js
+ * Matches the app's design system (ink, skywash, signal color palette)
+ */
+
+/* Base code block styling */
+.hljs {
+  display: block;
+  overflow-x: auto;
+  padding: 0;
+  color: #e8dfd4;
+  background: #362d26;
+}
+
+/* Comments and documentation */
+.hljs-comment,
+.hljs-quote {
+  color: #9b866f;
+  font-style: italic;
+}
+
+/* Keywords, selectors, and tags */
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-tag,
+.hljs-name {
+  color: #6c9fd2;
+  font-weight: 600;
+}
+
+/* Function names */
+.hljs-function,
+.hljs-title,
+.hljs-section {
+  color: #4b7fbe;
+  font-weight: 600;
+}
+
+/* Strings and template strings */
+.hljs-string,
+.hljs-template-variable,
+.hljs-template-tag,
+.hljs-attr {
+  color: #f0a93b;
+}
+
+/* Numbers and literals */
+.hljs-number,
+.hljs-literal,
+.hljs-regexp {
+  color: #e38a24;
+}
+
+/* Variables and attributes */
+.hljs-variable,
+.hljs-attribute {
+  color: #d8c4af;
+}
+
+/* Built-in types and classes */
+.hljs-built_in,
+.hljs-class .hljs-title,
+.hljs-type {
+  color: #7eb3e6;
+}
+
+/* Symbols and operators */
+.hljs-symbol,
+.hljs-bullet,
+.hljs-operator {
+  color: #b8a593;
+}
+
+/* Meta information */
+.hljs-meta,
+.hljs-meta .hljs-keyword {
+  color: #9b866f;
+}
+
+/* Links in markdown code */
+.hljs-link {
+  color: #6c9fd2;
+  text-decoration: underline;
+}
+
+/* Deletion (diff) */
+.hljs-deletion {
+  color: #e85b3e;
+  background-color: #4a2d28;
+}
+
+/* Addition (diff) */
+.hljs-addition {
+  color: #7eb851;
+  background-color: #2d3b28;
+}
+
+/* Emphasis */
+.hljs-emphasis {
+  font-style: italic;
+}
+
+/* Strong emphasis */
+.hljs-strong {
+  font-weight: bold;
+}
