@@ -1,6 +1,6 @@
 'use client'
 
-import { AlertTriangle, CheckCircle2, Slash, ShieldAlert, TrendingUp } from "lucide-react"
+import { AlertTriangle, CheckCircle2, Slash, ShieldAlert, TrendingUp, Loader2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -26,6 +26,7 @@ export interface GatePanelProps {
   onDecision?: (decision: "proceed" | "caution" | "stop") => void
   onAction?: (action: "escalate") => void
   onAddFollowup?: (followup: string) => void
+  loading?: boolean
 }
 
 export function GatePanel({
@@ -37,7 +38,8 @@ export function GatePanel({
   followups,
   onDecision,
   onAction,
-  onAddFollowup
+  onAddFollowup,
+  loading
 }: GatePanelProps) {
   const resolved = {
     overall: overall ?? 0,
@@ -231,22 +233,22 @@ export function GatePanel({
         </div>
 
         <div className="grid grid-cols-3 gap-2">
-          <Button variant="outline" onClick={() => onAction?.("escalate")}>
-            <ShieldAlert className="h-4 w-4" />
+          <Button variant="outline" onClick={() => onAction?.("escalate")} disabled={loading}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldAlert className="h-4 w-4" />}
             Escalate
           </Button>
-          <Button variant="secondary" onClick={() => onDecision?.("caution")}>
-            <AlertTriangle className="h-4 w-4" />
+          <Button variant="secondary" onClick={() => onDecision?.("caution")} disabled={loading}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <AlertTriangle className="h-4 w-4" />}
             Caution
           </Button>
-          <Button variant="default" onClick={() => onDecision?.("proceed")}>
-            <CheckCircle2 className="h-4 w-4" />
+          <Button variant="default" onClick={() => onDecision?.("proceed")} disabled={loading}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
             Proceed
           </Button>
         </div>
         <div className="grid grid-cols-1 gap-2">
-          <Button variant="destructive" onClick={() => onDecision?.("stop")}>
-            <Slash className="h-4 w-4" />
+          <Button variant="destructive" onClick={() => onDecision?.("stop")} disabled={loading}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Slash className="h-4 w-4" />}
             Stop
           </Button>
         </div>

@@ -45,7 +45,7 @@ function CandidateWorkspace() {
   const [forcedFollowupId, setForcedFollowupId] = useState<string | null>(null)
   const [forcedFollowupQuestion, setForcedFollowupQuestion] = useState<string | null>(null)
   const [serverFollowups, setServerFollowups] = useState<
-    Array<{ id: string; question: string; round_number?: number | null; source?: string }>
+    Array<{ id: string; question: string; round_number?: number | null; source?: string; answered?: boolean; answer?: string }>
   >([])
   const [localFollowups, setLocalFollowups] = useState<
     Array<{ question_id: string; question: string; round_number: number }>
@@ -53,9 +53,12 @@ function CandidateWorkspace() {
   const [localAnswers, setLocalAnswers] = useState<
     Array<{ question_id: string; question: string; answer: string; round_number: number }>
   >([])
+  const [submittingFollowup, setSubmittingFollowup] = useState(false)
 
   const followupThread = useMemo(() => {
     if (!currentRound) return []
+
+    // Single canonical source: followup_question events (covers both auto + manual)
     const questions = (events || [])
       .filter(
         (event) =>
@@ -64,27 +67,6 @@ function CandidateWorkspace() {
             Number(event.payload?.round_number) === currentRound.round_number)
       )
       .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-
-    const manualQuestions = (events || [])
-      .filter(
-        (event) =>
-          event.event_type === 'interviewer_action' &&
-          event.payload?.action_type === 'manual_followup' &&
-          event.payload?.followup
-      )
-      .map((event) => ({
-        payload: {
-          question_id: event.payload?.question_id,
-          question: event.payload?.followup,
-          round_number: event.payload?.round_number ?? event.payload?.target_round
-        },
-        created_at: event.created_at
-      }))
-      .filter(
-        (event) =>
-          event.payload?.round_number == null ||
-          Number(event.payload?.round_number) === currentRound.round_number
-      )
 
     const answers = (events || [])
       .filter(
@@ -95,6 +77,7 @@ function CandidateWorkspace() {
       )
       .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
 
+    // Optimistic local questions (shown before real-time events arrive)
     const localQuestions = localFollowups
       .filter((item) => Number(item.round_number) === currentRound.round_number)
       .map((item) => ({
@@ -105,6 +88,7 @@ function CandidateWorkspace() {
         created_at: new Date().toISOString()
       }))
 
+    // Server questions (loaded on mount for page reloads)
     const serverQuestions = serverFollowups
       .filter(
         (item) =>
@@ -124,43 +108,84 @@ function CandidateWorkspace() {
       .map((item) => ({
         payload: {
           question_id: item.question_id,
+          question: item.question,
           answer: item.answer
         },
         created_at: new Date().toISOString()
       }))
 
-    const allQuestions = [
-      ...localQuestions,
-      ...serverQuestions,
-      ...manualQuestions,
-      ...questions
-    ].reduce((acc, item) => {
+    // Deduplicate by question_id first, then by question text as fallback
+    // (multiple submissions of the same text create different UUIDs)
+    const seenIds = new Set<string>()
+    const seenTexts = new Set<string>()
+    const allQuestions: Array<{ payload?: Record<string, any>; created_at: string; [key: string]: any }> = []
+    for (const item of [...localQuestions, ...serverQuestions, ...questions]) {
       const id = item.payload?.question_id
-      if (!id || acc.some((q) => q.payload?.question_id === id)) return acc
-      acc.push(item)
-      return acc
-    }, [] as Array<{ payload?: Record<string, any>; created_at: string; [key: string]: any }>)
+      if (id && seenIds.has(id)) continue
+      const textKey = (item.payload?.question || '').toLowerCase().trim()
+      if (textKey && seenTexts.has(textKey)) continue
+      if (id) seenIds.add(id)
+      if (textKey) seenTexts.add(textKey)
+      allQuestions.push(item)
+    }
 
     const allAnswers = [...answers, ...localAnswerEvents]
 
-    const answerMap = new Map<string, string>()
+    // Dual answer matching: by question_id (UUID) AND by question text
+    // This handles UUID mismatches when dedup picks a different ID than what the answer references
+    const answerByIdMap = new Map<string, string>()
+    const answerByTextMap = new Map<string, string>()
     for (const answer of allAnswers) {
+      const ans = answer.payload?.answer || ''
       if (answer.payload?.question_id) {
-        answerMap.set(answer.payload.question_id, answer.payload?.answer || '')
+        answerByIdMap.set(answer.payload.question_id, ans)
+      }
+      const qText = String(answer.payload?.question || '').toLowerCase().trim()
+      if (qText) {
+        answerByTextMap.set(qText, ans)
       }
     }
 
-    return allQuestions.map((question) => ({
-      id: question.payload?.question_id,
-      question:
+    // Third fallback: server-side answered status from /api/followup/thread
+    const serverAnswerByIdMap = new Map<string, string>()
+    const serverAnswerByTextMap = new Map<string, string>()
+    for (const item of serverFollowups) {
+      if (item.answered) {
+        const ans = item.answer || ''
+        if (item.id) serverAnswerByIdMap.set(item.id, ans)
+        const sText = item.question.toLowerCase().trim()
+        if (sText) serverAnswerByTextMap.set(sText, ans)
+      }
+    }
+
+    return allQuestions.map((question) => {
+      const questionText =
         forcedFollowupId &&
         forcedFollowupQuestion &&
         question.payload?.question_id === forcedFollowupId
           ? forcedFollowupQuestion
-          : question.payload?.question || '',
-      answered: answerMap.has(question.payload?.question_id),
-      answer: answerMap.get(question.payload?.question_id)
-    }))
+          : question.payload?.question || ''
+      const textKey = questionText.toLowerCase().trim()
+      const qId = question.payload?.question_id
+      const answeredById = qId ? answerByIdMap.has(qId) : false
+      const answeredByText = answerByTextMap.has(textKey)
+      const answeredByServer = qId
+        ? serverAnswerByIdMap.has(qId) || serverAnswerByTextMap.has(textKey)
+        : serverAnswerByTextMap.has(textKey)
+      const isAnswered = answeredById || answeredByText || answeredByServer
+      return {
+        id: qId,
+        question: questionText,
+        answered: isAnswered,
+        answer: answeredById
+          ? answerByIdMap.get(qId!)
+          : answeredByText
+            ? answerByTextMap.get(textKey)
+            : answeredByServer
+              ? (serverAnswerByIdMap.get(qId!) || serverAnswerByTextMap.get(textKey))
+              : undefined
+      }
+    })
   }, [
     events,
     currentRound,
@@ -195,7 +220,7 @@ function CandidateWorkspace() {
     Boolean(followupGateRound && currentRound?.round_number === followupGateRound) ||
     hasPendingFollowups
 
-  // Load follow-up thread
+  // Load follow-up thread with periodic refresh
   useEffect(() => {
     if (!session?.id) return
     const loadThread = async () => {
@@ -216,7 +241,25 @@ function CandidateWorkspace() {
       }
     }
     loadThread()
+    const interval = setInterval(loadThread, 5000)
+    return () => clearInterval(interval)
   }, [session?.id])
+
+  // Prune localFollowups once the same question_id appears in real-time events
+  useEffect(() => {
+    if (!events || events.length === 0 || localFollowups.length === 0) return
+    const eventQuestionIds = new Set(
+      events
+        .filter((e) => e.event_type === 'followup_question')
+        .map((e) => e.payload?.question_id)
+        .filter(Boolean)
+    )
+    if (eventQuestionIds.size === 0) return
+    setLocalFollowups((prev) => {
+      const pruned = prev.filter((item) => !eventQuestionIds.has(item.question_id))
+      return pruned.length === prev.length ? prev : pruned
+    })
+  }, [events, localFollowups.length])
 
   // Auto-start first round
   useEffect(() => {
@@ -452,22 +495,40 @@ function CandidateWorkspace() {
 
   const submitFollowupAnswer = async () => {
     if (!pendingFollowup || !session || !currentRound) return
-    if (!followupAnswer.trim()) return
+    if (!followupAnswer.trim() || submittingFollowup) return
 
-    await fetch('/api/artifact/submit', {
+    setSubmittingFollowup(true)
+    const answerText = followupAnswer.trim()
+
+    try {
+    // Create followup_answer event via dedicated endpoint (bypasses artifacts table)
+    await fetch('/api/followup/answer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: session.id,
+        round_number: currentRound.round_number,
+        question_id: pendingFollowup.id,
+        question: pendingFollowup.question,
+        answer: answerText
+      })
+    })
+
+    // Also try artifact submission (best-effort, may fail if schema is missing columns)
+    fetch('/api/artifact/submit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         session_id: session.id,
         round_number: currentRound.round_number,
         artifact_type: 'followup_answer',
-        content: followupAnswer.trim(),
+        content: answerText,
         metadata: {
           question_id: pendingFollowup.id,
           question: pendingFollowup.question
         }
       })
-    })
+    }).catch(() => {})
 
     if (pendingFollowup?.id && pendingFollowup.question) {
       setLocalAnswers((prev) => [
@@ -475,7 +536,7 @@ function CandidateWorkspace() {
         {
           question_id: pendingFollowup.id,
           question: pendingFollowup.question,
-          answer: followupAnswer.trim(),
+          answer: answerText,
           round_number: currentRound.round_number
         }
       ])
@@ -485,6 +546,9 @@ function CandidateWorkspace() {
       setForcedFollowupQuestion(null)
     }
     setFollowupAnswer('')
+    } finally {
+      setSubmittingFollowup(false)
+    }
   }
 
   const formattedTime = useMemo(() => {
@@ -661,8 +725,15 @@ function CandidateWorkspace() {
                         onChange={(e) => setFollowupAnswer(e.target.value)}
                       />
                       <div className="flex items-center gap-3">
-                        <Button size="sm" onClick={submitFollowupAnswer} disabled={!followupAnswer.trim()}>
-                          Submit follow-up
+                        <Button size="sm" onClick={submitFollowupAnswer} disabled={!followupAnswer.trim() || submittingFollowup}>
+                          {submittingFollowup ? (
+                            <>
+                              <span className="mr-2 inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                              Submitting...
+                            </>
+                          ) : (
+                            'Submit follow-up'
+                          )}
                         </Button>
                         <span className="text-xs text-muted-foreground">
                           You must answer follow-ups before proceeding.
@@ -687,7 +758,11 @@ function CandidateWorkspace() {
                   size="lg"
                   className="min-w-44 rounded-2xl"
                 >
-                  <CheckCircle2 className="h-4 w-4" />
+                  {submitting ? (
+                    <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                  ) : (
+                    <CheckCircle2 className="h-4 w-4" />
+                  )}
                   {submitting ? "Submitting..." : "Submit & Next"}
                 </Button>
               </CardFooter>

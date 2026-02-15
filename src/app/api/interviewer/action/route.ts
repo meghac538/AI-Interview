@@ -341,30 +341,17 @@ export async function POST(request: Request) {
 
       const questionId = crypto.randomUUID()
 
-      if (roundNumber) {
-        await supabaseAdmin.from('live_events').insert({
-          session_id,
-          event_type: 'followup_question',
-          actor: 'interviewer',
-          payload: {
-            round_number: roundNumber,
-            question_id: questionId,
-            question: payload.followup,
-            source: 'manual'
-          }
-        })
-      }
-
+      // Always create a single followup_question event (no separate interviewer_action
+      // for manual follow-ups — the followup_question event is the canonical source)
       await supabaseAdmin.from('live_events').insert({
         session_id,
-        event_type: 'interviewer_action',
+        event_type: 'followup_question',
         actor: 'interviewer',
         payload: {
-          action_type,
-          ...payload,
+          round_number: roundNumber,
           question_id: questionId,
-          round_number: roundNumber ?? payload?.round_number ?? null,
-          target_round: payload?.target_round ?? roundNumber ?? null
+          question: payload.followup,
+          source: 'manual'
         }
       })
 

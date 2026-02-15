@@ -14,30 +14,8 @@ export async function POST(request: Request) {
       )
     }
 
-    // Insert artifact with content + round_number as proper columns
-    const { data: artifact, error } = await supabaseAdmin
-      .from('artifacts')
-      .insert({
-        session_id,
-        artifact_type,
-        url: '',
-        content,
-        round_number,
-        metadata: metadata || {}
-      })
-      .select()
-      .single()
-
-    if (error) throw error
-
-    // Log event (live_events table)
-    await supabaseAdmin.from('live_events').insert({
-      session_id,
-      event_type: 'artifact_submitted',
-      actor: 'candidate',
-      payload: { artifact_id: artifact.id, artifact_type, round_number }
-    })
-
+    // Create followup_answer event FIRST (before artifact insert which may fail
+    // if the artifacts table schema doesn't have all expected columns)
     if (artifact_type === 'followup_answer' && metadata?.question_id) {
       await supabaseAdmin.from('live_events').insert({
         session_id,
@@ -51,6 +29,51 @@ export async function POST(request: Request) {
         }
       })
     }
+
+    // Insert artifact — try with metadata column first, fall back without it
+    let artifact: any = null
+    const { data: withMeta, error: metaError } = await supabaseAdmin
+      .from('artifacts')
+      .insert({
+        session_id,
+        artifact_type,
+        url: '',
+        content,
+        round_number,
+        metadata: metadata || {}
+      })
+      .select()
+      .single()
+
+    if (metaError && metaError.code === 'PGRST204') {
+      // metadata column doesn't exist — insert without it
+      const { data: withoutMeta, error: fallbackError } = await supabaseAdmin
+        .from('artifacts')
+        .insert({
+          session_id,
+          artifact_type,
+          url: '',
+          content,
+          round_number
+        })
+        .select()
+        .single()
+
+      if (fallbackError) throw fallbackError
+      artifact = withoutMeta
+    } else if (metaError) {
+      throw metaError
+    } else {
+      artifact = withMeta
+    }
+
+    // Log event (live_events table)
+    await supabaseAdmin.from('live_events').insert({
+      session_id,
+      event_type: 'artifact_submitted',
+      actor: 'candidate',
+      payload: { artifact_id: artifact.id, artifact_type, round_number }
+    })
 
     // Only trigger scoring for final (non-draft) submissions like followup answers.
     // Draft auto-saves from TextResponseUI are scored at round completion time instead.

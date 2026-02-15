@@ -153,11 +153,13 @@ function analyzeTranscript(transcript: TranscriptEntry[]) {
 }
 
 function buildGateData(scores: any[], events?: any[]) {
+  // Collect follow-ups from followup_question events (canonical source for both auto + manual)
   const eventFollowups = (events || [])
     .filter((event) => event.event_type === 'followup_question')
     .map((event) => String(event.payload?.question || '').trim())
     .filter(Boolean)
 
+  // Legacy: also collect from interviewer_action events (for old data before migration)
   const manualFollowups = (events || [])
     .filter(
       (event) =>
@@ -165,7 +167,7 @@ function buildGateData(scores: any[], events?: any[]) {
         event.payload?.action_type === 'manual_followup'
     )
     .map((event) => String(event.payload?.followup || '').trim())
-    .filter(Boolean)
+    .filter((text) => text && !eventFollowups.includes(text))
 
   const eventRedFlags: RedFlagEntry[] = (events || [])
     .filter((e) => e.event_type === 'red_flag_detected')
@@ -518,6 +520,7 @@ function InterviewerView() {
   const [showNotes, setShowNotes] = useState(false)
   const [showFollowups, setShowFollowups] = useState(false)
   const [showControls, setShowControls] = useState(true)
+  const [sendingAction, setSendingAction] = useState<string | null>(null)
   const [curveball, setCurveball] = useState('budget_cut')
   const [persona, setPersona] = useState('skeptical')
   const [escalationLevel, setEscalationLevel] = useState('L3')
@@ -588,6 +591,7 @@ function InterviewerView() {
     })
   }, [rounds])
   const followupThread = useMemo(() => {
+    // Single canonical source: followup_question events (covers both auto + manual)
     const questions = (events || [])
       .filter((event: any) => event.event_type === 'followup_question')
       .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
@@ -596,43 +600,20 @@ function InterviewerView() {
       .filter((event: any) => event.event_type === 'followup_answer')
       .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
 
-    const answerMap = new Map<string, string>()
+    // Map answers by question_id AND by question text (fallback for UUID mismatches
+    // when candidate picks a different UUID than what interviewer dedup selected)
+    const answerByIdMap = new Map<string, string>()
+    const answerByTextMap = new Map<string, string>()
     for (const answer of answers) {
+      const ans = answer.payload?.answer || ''
       if (answer.payload?.question_id) {
-        answerMap.set(answer.payload.question_id, answer.payload?.answer || '')
+        answerByIdMap.set(answer.payload.question_id, ans)
+      }
+      const qText = String(answer.payload?.question || '').toLowerCase().trim()
+      if (qText) {
+        answerByTextMap.set(qText, ans)
       }
     }
-
-    const manualQuestions = (events || [])
-      .filter(
-        (event: any) =>
-          event.event_type === 'interviewer_action' &&
-          event.payload?.action_type === 'manual_followup' &&
-          event.payload?.followup
-      )
-      .map((event: any) => ({
-        id: event.payload?.question_id || `manual-${event.id}`,
-        question: event.payload?.followup || '',
-        round_number: event.payload?.round_number ?? event.payload?.target_round,
-        source: 'manual',
-        created_at: event.created_at
-      }))
-
-    const localQuestions = localFollowups.map((item) => ({
-      id: item.id,
-      question: item.question,
-      round_number: item.round_number,
-      source: 'manual',
-      created_at: item.created_at
-    }))
-
-    const serverQuestions = serverFollowups.map((item) => ({
-      id: item.id,
-      question: item.question,
-      round_number: item.round_number,
-      source: item.source || 'manual',
-      created_at: new Date().toISOString()
-    }))
 
     const questionItems = [
       ...questions.map((question: any) => ({
@@ -642,29 +623,73 @@ function InterviewerView() {
         source: question.payload?.source || 'auto',
         created_at: question.created_at
       })),
-      ...manualQuestions,
-      ...localQuestions,
-      ...serverQuestions
+      ...localFollowups.map((item) => ({
+        id: item.id,
+        question: item.question,
+        round_number: item.round_number,
+        source: 'manual',
+        created_at: item.created_at
+      })),
+      ...serverFollowups.map((item) => ({
+        id: item.id,
+        question: item.question,
+        round_number: item.round_number,
+        source: item.source || 'manual',
+        created_at: new Date().toISOString()
+      }))
     ]
       .filter((item) => item.question)
       .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
 
-    const deduped = new Map<string, any>()
+    // Deduplicate by ID first, then by question text as fallback
+    const seenIds = new Set<string>()
+    const seenTexts = new Set<string>()
+    const deduped: typeof questionItems = []
+
     for (const item of questionItems) {
-      const key = item.id || `${item.question}-${item.created_at}`
-      if (!deduped.has(key)) {
-        deduped.set(key, item)
+      if (item.id && seenIds.has(item.id)) continue
+      const textKey = item.question.toLowerCase().trim()
+      if (seenTexts.has(textKey)) continue
+      if (item.id) seenIds.add(item.id)
+      seenTexts.add(textKey)
+      deduped.push(item)
+    }
+
+    // Third fallback: server-side answered status from /api/followup/thread
+    const serverAnswerByIdMap = new Map<string, string>()
+    const serverAnswerByTextMap = new Map<string, string>()
+    for (const item of serverFollowups) {
+      if (item.answered) {
+        const ans = item.answer || ''
+        if (item.id) serverAnswerByIdMap.set(item.id, ans)
+        const sText = item.question.toLowerCase().trim()
+        if (sText) serverAnswerByTextMap.set(sText, ans)
       }
     }
 
-    return Array.from(deduped.values()).map((question: any) => ({
-      id: question.id,
-      question: question.question,
-      round_number: question.round_number,
-      source: question.source,
-      answered: question.id ? answerMap.has(question.id) : false,
-      answer: question.id ? answerMap.get(question.id) : undefined
-    }))
+    return deduped.map((question) => {
+      const textKey = question.question.toLowerCase().trim()
+      const answeredById = question.id ? answerByIdMap.has(question.id) : false
+      const answeredByText = answerByTextMap.has(textKey)
+      const answeredByServer = question.id
+        ? serverAnswerByIdMap.has(question.id) || serverAnswerByTextMap.has(textKey)
+        : serverAnswerByTextMap.has(textKey)
+      const isAnswered = answeredById || answeredByText || answeredByServer
+      return {
+        id: question.id,
+        question: question.question,
+        round_number: question.round_number,
+        source: question.source,
+        answered: isAnswered,
+        answer: answeredById
+          ? answerByIdMap.get(question.id!)
+          : answeredByText
+            ? answerByTextMap.get(textKey)
+            : answeredByServer
+              ? (serverAnswerByIdMap.get(question.id!) || serverAnswerByTextMap.get(textKey))
+              : undefined
+      }
+    })
   }, [events, localFollowups, serverFollowups])
 
   useEffect(() => {
@@ -688,7 +713,27 @@ function InterviewerView() {
       }
     }
     loadThread()
+    // Poll server thread every 5s so answered status stays current
+    // even if real-time followup_answer events don't arrive
+    const interval = setInterval(loadThread, 5000)
+    return () => clearInterval(interval)
   }, [session?.id])
+  // Prune localFollowups once the same question text appears in real-time events
+  useEffect(() => {
+    if (!events || events.length === 0 || localFollowups.length === 0) return
+    const eventQuestions = new Set(
+      (events as any[])
+        .filter((e) => e.event_type === 'followup_question')
+        .map((e) => String(e.payload?.question || '').toLowerCase().trim())
+        .filter(Boolean)
+    )
+    if (eventQuestions.size === 0) return
+    setLocalFollowups((prev) => {
+      const pruned = prev.filter((item) => !eventQuestions.has(item.question.toLowerCase().trim()))
+      return pruned.length === prev.length ? prev : pruned
+    })
+  }, [events, localFollowups.length])
+
   const mergedGateFollowups = useMemo(() => {
     const local = localFollowups.map((item) => item.question).filter(Boolean)
     return Array.from(new Set([...(gateData.followups || []), ...local]))
@@ -789,31 +834,36 @@ function InterviewerView() {
   const isCallInProgress = !!voiceActiveRound && isVoiceRealtimeActive
 
   const sendAction = async (action_type: string, payload?: Record<string, any>) => {
-    const response = await fetch('/api/interviewer/action', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        session_id: session.id,
-        action_type,
-        payload
-      })
-    })
-
-    let data: any = null
+    setSendingAction(action_type)
     try {
-      data = await response.json()
-    } catch {
-      data = null
-    }
+      const response = await fetch('/api/interviewer/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: session.id,
+          action_type,
+          payload
+        })
+      })
 
-    if (!response.ok) {
-      setActionNotice({ kind: 'error', message: data?.error || `Action failed: ${action_type}` })
-      return { ok: false, data }
-    }
+      let data: any = null
+      try {
+        data = await response.json()
+      } catch {
+        data = null
+      }
 
-    setActionNotice({ kind: 'success', message: `Action applied: ${action_type.replace(/_/g, ' ')}` })
-    await refresh()
-    return { ok: true, data }
+      if (!response.ok) {
+        setActionNotice({ kind: 'error', message: data?.error || `Action failed: ${action_type}` })
+        return { ok: false, data }
+      }
+
+      setActionNotice({ kind: 'success', message: `Action applied: ${action_type.replace(/_/g, ' ')}` })
+      await refresh()
+      return { ok: true, data }
+    } finally {
+      setSendingAction(null)
+    }
   }
 
   const sendDecision = async (decision: 'proceed' | 'caution' | 'stop') => {
@@ -1061,16 +1111,16 @@ function InterviewerView() {
                   )}
                   Send Candidate Link
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => sendAction('inject_curveball')}>
-                  <Sparkles className="h-4 w-4" />
+                <Button size="sm" variant="outline" onClick={() => sendAction('inject_curveball')} disabled={!!sendingAction}>
+                  {sendingAction === 'inject_curveball' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
                   Inject Curveball
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => sendAction('switch_persona')}>
-                  <Wand2 className="h-4 w-4" />
+                <Button size="sm" variant="outline" onClick={() => sendAction('switch_persona')} disabled={!!sendingAction}>
+                  {sendingAction === 'switch_persona' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
                   Switch Persona
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => sendAction('end_round')}>
-                  <Clock3 className="h-4 w-4" />
+                <Button size="sm" variant="outline" onClick={() => sendAction('end_round')} disabled={!!sendingAction}>
+                  {sendingAction === 'end_round' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Clock3 className="h-4 w-4" />}
                   End Round
                 </Button>
               </div>
@@ -1386,6 +1436,7 @@ function InterviewerView() {
             redFlags={gateData.redFlags}
             truthLog={gateData.truthLog}
             followups={mergedGateFollowups}
+            loading={!!sendingAction}
             onDecision={sendDecision}
             onAction={(action) => {
               if (action === 'escalate') {
@@ -1393,6 +1444,13 @@ function InterviewerView() {
               }
             }}
             onAddFollowup={async (followup) => {
+              const lower = followup.toLowerCase().trim()
+              const alreadySent = followupThread.some(
+                (q) => q.question.toLowerCase().trim() === lower
+              ) || localFollowups.some(
+                (q) => q.question.toLowerCase().trim() === lower
+              )
+              if (alreadySent) return
               await sendAction('manual_followup', { followup })
             }}
           />
@@ -1534,6 +1592,7 @@ function InterviewerView() {
                     variant="destructive"
                     size="sm"
                     className="w-full"
+                    disabled={!!sendingAction}
                     onClick={() => {
                       sendAction('flag_red_flag', {
                         flag_type: flagType,
@@ -1543,8 +1602,8 @@ function InterviewerView() {
                       setFlagDescription('')
                     }}
                   >
-                    <AlertTriangle className="mr-2 h-4 w-4" />
-                    Flag
+                    {sendingAction === 'flag_red_flag' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <AlertTriangle className="mr-2 h-4 w-4" />}
+                    {sendingAction === 'flag_red_flag' ? 'Flagging...' : 'Flag'}
                   </Button>
                 </div>
 
@@ -1577,14 +1636,15 @@ function InterviewerView() {
               />
               <Button
                 variant="secondary"
+                disabled={!!sendingAction || !notes.trim()}
                 onClick={async () => {
                   if (!notes.trim()) return
                   await sendAction('interviewer_note', { note: notes })
                   setNotes('')
                 }}
               >
-                <BadgeCheck className="h-4 w-4" />
-                Save Note
+                {sendingAction === 'interviewer_note' ? <Loader2 className="h-4 w-4 animate-spin" /> : <BadgeCheck className="h-4 w-4" />}
+                {sendingAction === 'interviewer_note' ? 'Saving...' : 'Save Note'}
               </Button>
               <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
                 <ShieldAlert className="mb-2 h-4 w-4" />
@@ -1615,19 +1675,23 @@ function InterviewerView() {
                         if (event.key === 'Enter') {
                           const value = (event.currentTarget.value || '').trim()
                           if (!value) return
+                          const lowerValue = value.toLowerCase()
+                          const alreadySent = followupThread.some(
+                            (q) => q.question.toLowerCase().trim() === lowerValue
+                          ) || localFollowups.some(
+                            (q) => q.question.toLowerCase().trim() === lowerValue
+                          )
+                          if (alreadySent) return
                           const optimisticId = `local-${Date.now()}`
-                          setLocalFollowups((prev) => {
-                            if (prev.some((item) => item.question === value)) return prev
-                            return [
-                              ...prev,
-                              {
-                                id: optimisticId,
-                                question: value,
-                                round_number: targetRoundNumber ?? undefined,
-                                created_at: new Date().toISOString()
-                              }
-                            ]
-                          })
+                          setLocalFollowups((prev) => [
+                            ...prev,
+                            {
+                              id: optimisticId,
+                              question: value,
+                              round_number: targetRoundNumber ?? undefined,
+                              created_at: new Date().toISOString()
+                            }
+                          ])
                           sendAction('manual_followup', {
                             followup: value,
                             round_number: targetRoundNumber ?? null,
@@ -1640,24 +1704,29 @@ function InterviewerView() {
                     <Button
                       variant="outline"
                       size="sm"
+                      disabled={sendingAction === 'manual_followup'}
                       onClick={(event) => {
                         const input = (event.currentTarget
                           .previousElementSibling as HTMLInputElement | null)
                         const value = (input?.value || '').trim()
                         if (!value) return
+                        const lowerValue = value.toLowerCase()
+                        const alreadySent = followupThread.some(
+                          (q) => q.question.toLowerCase().trim() === lowerValue
+                        ) || localFollowups.some(
+                          (q) => q.question.toLowerCase().trim() === lowerValue
+                        )
+                        if (alreadySent) return
                         const optimisticId = `local-${Date.now()}`
-                        setLocalFollowups((prev) => {
-                          if (prev.some((item) => item.question === value)) return prev
-                          return [
-                            ...prev,
-                            {
-                              id: optimisticId,
-                              question: value,
-                              round_number: targetRoundNumber ?? undefined,
-                              created_at: new Date().toISOString()
-                            }
-                          ]
-                        })
+                        setLocalFollowups((prev) => [
+                          ...prev,
+                          {
+                            id: optimisticId,
+                            question: value,
+                            round_number: targetRoundNumber ?? undefined,
+                            created_at: new Date().toISOString()
+                          }
+                        ])
                         sendAction('manual_followup', {
                           followup: value,
                           round_number: targetRoundNumber ?? null,
@@ -1666,7 +1735,14 @@ function InterviewerView() {
                         if (input) input.value = ''
                       }}
                     >
-                      Add
+                      {sendingAction === 'manual_followup' ? (
+                        <>
+                          <span className="mr-1 inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                          Sending...
+                        </>
+                      ) : (
+                        'Add'
+                      )}
                     </Button>
                   </div>
                   {mergedGateFollowups.length > 0 && (
@@ -1684,20 +1760,25 @@ function InterviewerView() {
                             <Button
                               variant="outline"
                               size="sm"
+                              disabled={!!sendingAction}
                               onClick={() => {
+                                const lowerItem = item.toLowerCase().trim()
+                                const alreadySent = followupThread.some(
+                                  (q) => q.question.toLowerCase().trim() === lowerItem
+                                ) || localFollowups.some(
+                                  (q) => q.question.toLowerCase().trim() === lowerItem
+                                )
+                                if (alreadySent) return
                                 const optimisticId = `local-${Date.now()}`
-                                setLocalFollowups((prev) => {
-                                  if (prev.some((row) => row.question === item)) return prev
-                                  return [
-                                    ...prev,
-                                    {
-                                      id: optimisticId,
-                                      question: item,
-                                      round_number: targetRoundNumber ?? undefined,
-                                      created_at: new Date().toISOString()
-                                    }
-                                  ]
-                                })
+                                setLocalFollowups((prev) => [
+                                  ...prev,
+                                  {
+                                    id: optimisticId,
+                                    question: item,
+                                    round_number: targetRoundNumber ?? undefined,
+                                    created_at: new Date().toISOString()
+                                  }
+                                ])
                                 sendAction('manual_followup', {
                                   followup: item,
                                   round_number: targetRoundNumber ?? null,
@@ -1705,7 +1786,11 @@ function InterviewerView() {
                                 })
                               }}
                             >
-                              Ask now
+                              {sendingAction === 'manual_followup' ? (
+                                <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                              ) : (
+                                'Ask now'
+                              )}
                             </Button>
                           </li>
                         ))}

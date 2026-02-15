@@ -29,7 +29,8 @@ export function useRealtimeSession(sessionId: string) {
     setLoading(false)
   }, [sessionId])
 
-  // Initial fetch + polling fallback (keeps UI live even if realtime is unavailable)
+  // Initial fetch + slow polling fallback (real-time handles live updates;
+  // polling is only a safety net in case the WebSocket drops)
   useEffect(() => {
     if (!sessionId) return
     let cancelled = false
@@ -43,7 +44,7 @@ export function useRealtimeSession(sessionId: string) {
 
     const interval = setInterval(() => {
       void tick()
-    }, 2500)
+    }, 15000)
 
     return () => {
       cancelled = true
@@ -132,7 +133,11 @@ export function useRealtimeSession(sessionId: string) {
         },
         (payload) => {
           if (payload.new) {
-            setEvents((prev) => [payload.new as Event, ...prev])
+            const incoming = payload.new as Event
+            setEvents((prev) => {
+              if (prev.some((e) => e.id === incoming.id)) return prev
+              return [incoming, ...prev]
+            })
           }
         }
       )
