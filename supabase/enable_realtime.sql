@@ -4,17 +4,17 @@
 -- CRITICAL: This must be done for real-time updates to work!
 
 -- 1. Existing tables
-ALTER PUBLICATION supabase_realtime ADD TABLE IF NOT EXISTS interview_sessions;
-ALTER PUBLICATION supabase_realtime ADD TABLE IF NOT EXISTS interview_scope_packages;
-ALTER PUBLICATION supabase_realtime ADD TABLE IF NOT EXISTS live_events;
-ALTER PUBLICATION supabase_realtime ADD TABLE IF NOT EXISTS scores;
-ALTER PUBLICATION supabase_realtime ADD TABLE IF NOT EXISTS ai_assessments;
-ALTER PUBLICATION supabase_realtime ADD TABLE IF NOT EXISTS artifacts;
-ALTER PUBLICATION supabase_realtime ADD TABLE IF NOT EXISTS voice_commands;
+ALTER PUBLICATION supabase_realtime ADD TABLE interview_sessions;
+ALTER PUBLICATION supabase_realtime ADD TABLE interview_scope_packages;
+ALTER PUBLICATION supabase_realtime ADD TABLE live_events;
+ALTER PUBLICATION supabase_realtime ADD TABLE scores;
+ALTER PUBLICATION supabase_realtime ADD TABLE ai_assessments;
+ALTER PUBLICATION supabase_realtime ADD TABLE artifacts;
+ALTER PUBLICATION supabase_realtime ADD TABLE voice_commands;
 
 -- 2. NEW: Analytics tables
-ALTER PUBLICATION supabase_realtime ADD TABLE IF NOT EXISTS voice_transcripts;
-ALTER PUBLICATION supabase_realtime ADD TABLE IF NOT EXISTS voice_analysis;
+ALTER PUBLICATION supabase_realtime ADD TABLE voice_transcripts;
+ALTER PUBLICATION supabase_realtime ADD TABLE voice_analysis;
 
 -- Verify replication is enabled
 SELECT
