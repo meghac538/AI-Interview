@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase/server'
 import { fetchScopePackage, emitRedFlag } from '@/lib/db/helpers'
 
@@ -43,111 +43,118 @@ export async function POST(request: Request) {
       payload: { round_number }
     })
 
-    // Trigger scoring for the latest artifact in this round
-    try {
-      const currentRound = scopePackage.round_plan.find((r: any) => r.round_number === round_number)
-      const roundType = currentRound?.round_type || 'text'
+    // Schedule scoring + adaptive difficulty to run AFTER the response is sent.
+    // This keeps the round/complete response fast (~200ms) while scoring runs in background.
+    after(async () => {
+      try {
+        const currentRound = scopePackage.round_plan.find((r: any) => r.round_number === round_number)
+        const roundType = currentRound?.round_type || 'text'
 
-      const { data: artifacts } = await supabaseAdmin
-        .from('artifacts')
-        .select('*')
-        .eq('session_id', session_id)
-        .eq('round_number', round_number)
-        .order('created_at', { ascending: false })
-        .limit(1)
-
-      const artifact = artifacts?.[0]
-      if (artifact?.id) {
-        // Voice rounds store JSON-serialized conversations — skip AI scoring
-        if (roundType !== 'voice') {
-          const { runScoringForArtifact } = await import('@/lib/ai/score-runner')
-          await runScoringForArtifact(artifact.id)
-        }
-      } else if (roundType === 'voice') {
-        // Check if candidate interacted via live_events
-        const { data: participationEvents } = await supabaseAdmin
-          .from('live_events')
-          .select('id')
+        const { data: artifacts } = await supabaseAdmin
+          .from('artifacts')
+          .select('*')
           .eq('session_id', session_id)
-          .eq('event_type', 'prospect_message')
+          .eq('round_number', round_number)
+          .order('created_at', { ascending: false })
           .limit(1)
 
-        if (!participationEvents || participationEvents.length === 0) {
+        const artifact = artifacts?.[0]
+        if (artifact?.id) {
+          if (roundType !== 'voice') {
+            const { runScoringForArtifact } = await import('@/lib/ai/score-runner')
+            await runScoringForArtifact(artifact.id)
+          }
+        } else if (roundType === 'voice') {
+          const { data: participationEvents } = await supabaseAdmin
+            .from('live_events')
+            .select('id')
+            .eq('session_id', session_id)
+            .eq('event_type', 'prospect_message')
+            .limit(1)
+
+          if (!participationEvents || participationEvents.length === 0) {
+            await emitRedFlag(session_id, {
+              flag_type: 'insufficient_response',
+              severity: 'warning',
+              description: 'No conversation activity detected for this round',
+              auto_stop: false,
+              round_number,
+            })
+          }
+        } else {
           await emitRedFlag(session_id, {
             flag_type: 'insufficient_response',
             severity: 'warning',
-            description: 'No conversation activity detected for this round',
+            description: 'Candidate submitted no response for this round',
             auto_stop: false,
             round_number,
           })
-        }
-      } else {
-        // Non-voice round with no artifact
-        await emitRedFlag(session_id, {
-          flag_type: 'insufficient_response',
-          severity: 'warning',
-          description: 'Candidate submitted no response for this round',
-          auto_stop: false,
-          round_number,
-        })
 
-        await supabaseAdmin.from('scores').insert({
-          session_id,
-          round: round_number,
-          overall_score: 0,
-          dimension_scores: {},
-          red_flags: [{ flag_type: 'insufficient_response', severity: 'warning', description: 'No response submitted' }],
-          confidence: 0,
-          evidence_quotes: [],
-          recommendation: 'stop',
-          recommended_followups: ['Ask the candidate to provide a response for this round.']
-        })
-      }
-    } catch (error) {
-      console.error('Auto scoring error:', error)
-    }
-
-    // Adapt next round difficulty based on this round's score
-    try {
-      const { data: latestScore } = await supabaseAdmin
-        .from('scores')
-        .select('*')
-        .eq('session_id', session_id)
-        .eq('round', round_number)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single()
-
-      if (latestScore) {
-        const { adaptNextRound } = await import('@/lib/utils/round-adapter')
-        const { updatedPlan, adaptation } = adaptNextRound(
-          updatedRoundPlan,
-          round_number,
-          latestScore
-        )
-
-        if (adaptation) {
-          await supabaseAdmin
-            .from('interview_scope_packages')
-            .update({ round_plan: updatedPlan })
-            .eq('id', scopePackage.id)
-
-          await supabaseAdmin.from('live_events').insert({
+          const { error: scoreErr } = await supabaseAdmin.from('scores').insert({
             session_id,
-            event_type: 'difficulty_adaptation',
-            actor: 'system',
-            payload: adaptation
+            round: round_number,
+            overall_score: 0,
+            dimension_scores: {},
+            red_flags: [{ flag_type: 'insufficient_response', severity: 'warning', description: 'No response submitted' }],
+            confidence: 0,
+            evidence_quotes: [],
+            recommendation: 'stop',
+            recommended_followups: ['Ask the candidate to provide a response for this round.']
           })
-
-          updatedRoundPlan = updatedPlan
+          if (scoreErr) {
+            await supabaseAdmin.from('scores').insert({
+              session_id,
+              round_number,
+              overall_score: 0,
+              dimension_scores: {},
+              recommendation: 'stop'
+            })
+          }
         }
+      } catch (error) {
+        console.error('Auto scoring error:', error)
       }
-    } catch (adaptError) {
-      console.error('Adaptive difficulty error:', adaptError)
-    }
 
-    const adaptedRound = updatedRoundPlan.find((r: any) => r.round_number === round_number)
-    return NextResponse.json(adaptedRound)
+      // Adapt next round difficulty based on this round's score
+      try {
+        const { data: latestScore } = await supabaseAdmin
+          .from('scores')
+          .select('*')
+          .eq('session_id', session_id)
+          .eq('round', round_number)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single()
+
+        if (latestScore) {
+          const { adaptNextRound } = await import('@/lib/utils/round-adapter')
+          const { updatedPlan, adaptation } = adaptNextRound(
+            updatedRoundPlan,
+            round_number,
+            latestScore
+          )
+
+          if (adaptation) {
+            await supabaseAdmin
+              .from('interview_scope_packages')
+              .update({ round_plan: updatedPlan })
+              .eq('id', scopePackage.id)
+
+            await supabaseAdmin.from('live_events').insert({
+              session_id,
+              event_type: 'difficulty_adaptation',
+              actor: 'system',
+              payload: adaptation
+            })
+          }
+        }
+      } catch (adaptError) {
+        console.error('Adaptive difficulty error:', adaptError)
+      }
+    })
+
+    const completedRound = updatedRoundPlan.find((r: any) => r.round_number === round_number)
+    return NextResponse.json(completedRound)
   } catch (error: any) {
     console.error('Round complete error:', error)
     return NextResponse.json({ error: error.message }, { status: 500 })

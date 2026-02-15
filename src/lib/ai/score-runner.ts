@@ -59,7 +59,7 @@ export async function runScoringForArtifact(artifactId: string) {
       evidence: contentString ? [{ quote: String(contentString).slice(0, 120) }] : [],
     })
 
-    await supabaseAdmin.from('scores').insert({
+    const { error: earlyScoreErr } = await supabaseAdmin.from('scores').insert({
       session_id: artifact.session_id,
       round: roundNumber,
       overall_score: 0,
@@ -70,6 +70,15 @@ export async function runScoringForArtifact(artifactId: string) {
       recommendation: 'stop',
       recommended_followups: ['Ask the candidate to elaborate on their response.']
     })
+    if (earlyScoreErr) {
+      await supabaseAdmin.from('scores').insert({
+        session_id: artifact.session_id,
+        round_number: roundNumber,
+        overall_score: 0,
+        dimension_scores: {},
+        recommendation: 'stop'
+      })
+    }
 
     await supabaseAdmin.from('live_events').insert({
       session_id: artifact.session_id,
@@ -183,21 +192,46 @@ export async function runScoringForArtifact(artifactId: string) {
     evidenceQuotes.map((item) => ({ dimension: item.dimension, quote: item.quote }))
   )
 
-  await supabaseAdmin.from('scores').insert({
+  // Try insert with full columns first (Schema A: column = "round"), fallback to minimal (Schema B: column = "round_number")
+  const fullPayload = {
     session_id: artifact.session_id,
-    round_number: round.round_number,
+    round: round.round_number,
     overall_score: overallScore,
     dimension_scores: dimensionScores,
-    recommendation
-  })
+    red_flags: redFlags,
+    confidence,
+    evidence_quotes: evidenceQuotes,
+    recommendation,
+    recommended_followups: followups
+  }
+
+  const { error: insertError } = await supabaseAdmin.from('scores').insert(fullPayload)
+
+  if (insertError) {
+    console.error('Score insert (full) failed, trying minimal:', insertError.message)
+    // Fallback: try with round_number column and fewer fields
+    const { error: fallbackError } = await supabaseAdmin.from('scores').insert({
+      session_id: artifact.session_id,
+      round_number: round.round_number,
+      overall_score: overallScore,
+      dimension_scores: dimensionScores,
+      recommendation
+    })
+    if (fallbackError) {
+      console.error('Score insert (minimal) also failed:', fallbackError.message)
+    }
+  }
 
   await supabaseAdmin.from('live_events').insert({
     session_id: artifact.session_id,
     event_type: 'scoring_completed',
+    actor: 'system',
     payload: {
       artifact_id: artifact.id,
       round_number: round.round_number,
-      dimensions: results.length
+      overall_score: overallScore,
+      dimensions: results.length,
+      recommendation
     }
   })
 

@@ -714,9 +714,8 @@ function InterviewerView() {
       }
     }
     loadThread()
-    // Poll server thread every 5s so answered status stays current
-    // even if real-time followup_answer events don't arrive
-    const interval = setInterval(loadThread, 5000)
+    // Poll server thread every 30s as a safety net — real-time events handle live updates
+    const interval = setInterval(loadThread, 30000)
     return () => clearInterval(interval)
   }, [session?.id])
   // Prune localFollowups once the same question text appears in real-time events
@@ -908,38 +907,41 @@ function InterviewerView() {
         return
       }
 
-      // Proceed: complete active round and start next, in parallel where possible
+      // Proceed: complete active round and start next
       const activeRound = (rounds || []).find((round) => round.status === 'active')
       const nextRound = (rounds || []).find((round) => round.status === 'pending')
 
-      // Wait for the gate event to land, then complete + start in sequence
-      // (start depends on complete finishing first)
-      await actionPromise
-
-      if (activeRound) {
-        await fetch('/api/round/complete', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            session_id: session.id,
-            round_number: activeRound.round_number
-          })
-        })
-      }
-
-      if (nextRound) {
-        await fetch('/api/round/start', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            session_id: session.id,
-            round_number: nextRound.round_number
-          })
-        })
-      }
+      // Don't block UI — fire round transitions and let real-time handle updates
+      void (async () => {
+        try {
+          await actionPromise
+          if (activeRound) {
+            await fetch('/api/round/complete', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                session_id: session.id,
+                round_number: activeRound.round_number
+              })
+            })
+          }
+          if (nextRound) {
+            await fetch('/api/round/start', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                session_id: session.id,
+                round_number: nextRound.round_number
+              })
+            })
+          }
+          refresh().catch(() => {})
+        } catch {
+          // Errors handled by real-time fallback
+        }
+      })()
 
       setActionNotice({ kind: 'success', message: 'Proceeding to next round.' })
-      refresh().catch(() => {})
     } finally {
       setSendingAction(null)
     }
@@ -982,32 +984,31 @@ function InterviewerView() {
     if (!activeRound) return
     setSendingAction('end_round')
     setActionNotice({ kind: 'success', message: 'Ending round...' })
-    try {
-      // Fire event log and round complete in parallel
-      await Promise.all([
-        fetch('/api/interviewer/action', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            session_id: session.id,
-            action_type: 'end_round',
-            payload: { round_number: activeRound.round_number }
-          })
-        }).catch(() => {}),
-        fetch('/api/round/complete', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            session_id: session.id,
-            round_number: activeRound.round_number
-          })
+    // Fire both requests in parallel, don't block UI
+    Promise.all([
+      fetch('/api/interviewer/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: session.id,
+          action_type: 'end_round',
+          payload: { round_number: activeRound.round_number }
         })
-      ])
+      }).catch(() => {}),
+      fetch('/api/round/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: session.id,
+          round_number: activeRound.round_number
+        })
+      }).catch(() => {})
+    ]).then(() => {
       setActionNotice({ kind: 'success', message: 'Round ended.' })
       refresh().catch(() => {})
-    } finally {
+    }).finally(() => {
       setSendingAction(null)
-    }
+    })
   }
 
   const injectCurveball = async (curveball: string) => {
@@ -1078,7 +1079,7 @@ function InterviewerView() {
     }
 
     setActionNotice({ kind: 'success', message: `Session marked ${status}.` })
-    await refresh()
+    refresh().catch(() => {})
   }
 
   const resolvedResumeUrl = resumePreview?.signedUrl || resumeUrl

@@ -267,7 +267,7 @@ function CandidateWorkspace() {
       }
     }
     loadThread()
-    const interval = setInterval(loadThread, 5000)
+    const interval = setInterval(loadThread, 15000)
     return () => clearInterval(interval)
   }, [session?.id])
 
@@ -419,149 +419,62 @@ function CandidateWorkspace() {
       return
     }
 
-    // Follow-up gating
-    if (hasPendingFollowups) return
+    // Show loading state immediately
+    setSubmitting(true)
 
     try {
-      const pendingResponse = await fetch('/api/followup/pending', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      // Only gate on followups that already exist locally (from real-time events).
+      // Don't make blocking API calls that slow down submit.
+      if (hasPendingFollowups) return
+
+      // Auto-save candidate response before completing the round
+      window.dispatchEvent(
+        new CustomEvent('round-auto-save', {
+          detail: { session_id: session.id, round_number: currentRound.round_number }
+        })
+      )
+      await new Promise((resolve) => setTimeout(resolve, 500))
+
+      // Complete current round
+      await fetch("/api/round/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_id: session.id,
           round_number: currentRound.round_number
         })
       })
-      if (pendingResponse.ok) {
-        const data = await pendingResponse.json()
-        if (data.pending && data.question_id && data.question) {
-          setLocalFollowups((prev) => {
-            if (prev.some((item) => item.question_id === data.question_id)) return prev
-            return [
-              ...prev,
-              {
-                question_id: data.question_id,
-                question: data.question,
-                round_number: currentRound.round_number
-              }
-            ]
+
+      const nextRound = rounds.find((round) => round.round_number === currentRound.round_number + 1)
+
+      if (nextRound) {
+        const startRes = await fetch("/api/round/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: session.id,
+            round_number: nextRound.round_number
           })
-          setForcedFollowupId(data.question_id)
-          setForcedFollowupQuestion(data.question)
-          setFollowupGateRound(currentRound.round_number)
-          return
-        }
-      }
-    } catch {
-      // Best-effort check
-    }
-
-    try {
-      const threadResponse = await fetch('/api/followup/thread', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: session.id })
-      })
-      if (threadResponse.ok) {
-        const data = await threadResponse.json()
-        const thread = Array.isArray(data?.thread) ? data.thread : []
-        const unanswered = thread.filter(
-          (item: any) =>
-            (item.round_number == null ||
-              Number(item.round_number) === currentRound.round_number) &&
-            !item.answered
-        )
-        const manual = unanswered.find((item: any) => item.source === 'manual')
-        const pending = manual || unanswered[0]
-        if (pending?.id && pending?.question) {
-          setLocalFollowups((prev) => {
-            if (prev.some((item) => item.question_id === pending.id)) return prev
-            return [
-              ...prev,
-              {
-                question_id: pending.id,
-                question: pending.question,
-                round_number: currentRound.round_number
-              }
-            ]
-          })
-          setForcedFollowupId(pending.id)
-          setForcedFollowupQuestion(pending.question)
-          setFollowupGateRound(currentRound.round_number)
-          return
-        }
-      }
-    } catch {
-      // Best-effort thread check
-    }
-
-    if (followupThread.length > 0) {
-      setFollowupGateRound(currentRound.round_number)
-      return
-    }
-
-    const followupResponse = await fetch('/api/followup/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        session_id: session.id,
-        round_number: currentRound.round_number
-      })
-    })
-
-    if (followupResponse.ok) {
-      const data = await followupResponse.json()
-      if (data.generated) {
-        if (data.question_id && data.question) {
-          setLocalFollowups((prev) => {
-            if (prev.some((item) => item.question_id === data.question_id)) return prev
-            return [
-              ...prev,
-              {
-                question_id: data.question_id,
-                question: data.question,
-                round_number: currentRound.round_number
-              }
-            ]
-          })
-        }
-        return
-      }
-    }
-
-    // Auto-save candidate response before completing the round
-    setSubmitting(true)
-    window.dispatchEvent(
-      new CustomEvent('round-auto-save', {
-        detail: { session_id: session.id, round_number: currentRound.round_number }
-      })
-    )
-    await new Promise((resolve) => setTimeout(resolve, 500))
-
-    // Complete current round
-    await fetch("/api/round/complete", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        session_id: session.id,
-        round_number: currentRound.round_number
-      })
-    })
-
-    const nextRound = rounds.find((round) => round.round_number === currentRound.round_number + 1)
-
-    if (nextRound) {
-      await fetch("/api/round/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          session_id: session.id,
-          round_number: nextRound.round_number
         })
-      })
-    }
-    // If no next round, session is marked 'completed' by the round/complete API
 
-    setSubmitting(false)
+        if (startRes.ok) {
+          const startedRound = await startRes.json()
+          const durationMinutes = Number(startedRound?.duration_minutes || nextRound.duration_minutes || 0)
+          const startedAt = startedRound?.started_at
+            ? new Date(startedRound.started_at).getTime()
+            : Date.now()
+          const nextEndAt = startedAt + durationMinutes * 60 * 1000
+          setEndAt(nextEndAt)
+          setTimeLeft(Math.max(0, Math.ceil((nextEndAt - Date.now()) / 1000)))
+          autoSubmitFired.current = false
+        }
+      }
+      // If no next round, session is marked 'completed' by the round/complete API
+    } catch (err) {
+      console.error('Submit error:', err)
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   // Keep ref in sync so the timer always calls the latest version
