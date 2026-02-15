@@ -24,7 +24,7 @@ export async function POST(request: Request) {
       .select('*')
       .eq('session_id', session_id)
       .eq('round_number', round_number || 1)
-      .order('timestamp', { ascending: false })
+      .order('timestamp', { ascending: true })
       .limit(20)
 
     if (transcriptError || !transcripts || transcripts.length === 0) {
@@ -35,8 +35,7 @@ export async function POST(request: Request) {
       )
     }
 
-    // Reverse to chronological order
-    const recentMessages = transcripts.reverse()
+    const recentMessages = transcripts
 
     // Step 3: Build conversation context for OpenAI
     const conversationText = recentMessages
@@ -96,15 +95,17 @@ Categories:
 - **curveball**: Add a surprise objection or constraint to see how candidate adapts
 - **followup_question**: Specific question the candidate should have asked but didn't
 
-Return JSON array:
-[
-  {
-    "category": "<context_injection|curveball|followup_question>",
-    "text": "<specific actionable suggestion>",
-    "priority": "<low|medium|high|critical>",
-    "rationale": "<why this matters now>"
-  }
-]
+Return JSON object:
+{
+  "suggestions": [
+    {
+      "category": "<context_injection|curveball|followup_question>",
+      "text": "<specific actionable suggestion>",
+      "priority": "<low|medium|high|critical>",
+      "rationale": "<why this matters now>"
+    }
+  ]
+}
 
 Be selective. Only suggest if there's a clear gap or opportunity. Empty array is fine.`
 
@@ -129,6 +130,7 @@ Be selective. Only suggest if there's a clear gap or opportunity. Empty array is
         analysis_type: 'say_meter',
         meter_score: sayMeterResult.score,
         meter_factors: sayMeterResult.factors,
+        meter_reasoning: sayMeterResult.summary,
         created_at: new Date().toISOString()
       })
       .select()
