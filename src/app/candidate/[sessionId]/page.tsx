@@ -64,6 +64,7 @@ function CandidateWorkspace() {
   const [endAt, setEndAt] = useState<number | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const autoSubmitFired = useRef(false)
+  const handleSubmitRef = useRef<(auto?: boolean) => Promise<void>>(() => Promise.resolve())
   const [followupAnswer, setFollowupAnswer] = useState('')
   const [followupGateRound, setFollowupGateRound] = useState<number | null>(null)
   const [forcedFollowupId, setForcedFollowupId] = useState<string | null>(null)
@@ -331,23 +332,23 @@ function CandidateWorkspace() {
     }
   }, [currentRound?.round_number, currentRound?.status, currentRound?.duration_minutes, currentRound?.started_at])
 
-  // Timer countdown
+  // Timer countdown — uses ref to always call the latest handleSubmit
   useEffect(() => {
     if (!endAt) return
 
     const tick = () => {
       const remaining = Math.max(0, Math.ceil((endAt - Date.now()) / 1000))
       setTimeLeft(remaining)
-      if (remaining === 0 && currentRound && !autoSubmitFired.current) {
+      if (remaining === 0 && !autoSubmitFired.current) {
         autoSubmitFired.current = true
-        void handleSubmit(true)
+        void handleSubmitRef.current(true)
       }
     }
 
     tick()
     const interval = setInterval(tick, 1000)
     return () => clearInterval(interval)
-  }, [endAt, currentRound?.round_number])
+  }, [endAt])
 
   const handleSubmit = async (auto = false) => {
     if (!session || !currentRound || submitting) return
@@ -356,39 +357,64 @@ function CandidateWorkspace() {
     if (auto) {
       setSubmitting(true)
 
-      // Dispatch auto-save event so round UIs can do a final non-draft save
-      window.dispatchEvent(
-        new CustomEvent('round-auto-save', {
-          detail: { session_id: session.id, round_number: currentRound.round_number }
-        })
-      )
-      // Brief wait for round UIs to fire their save requests
-      await new Promise((resolve) => setTimeout(resolve, 500))
+      try {
+        // Dispatch auto-save event so round UIs can do a final non-draft save
+        window.dispatchEvent(
+          new CustomEvent('round-auto-save', {
+            detail: { session_id: session.id, round_number: currentRound.round_number }
+          })
+        )
+        // Brief wait for round UIs to fire their save requests
+        await new Promise((resolve) => setTimeout(resolve, 500))
 
-      await fetch("/api/round/complete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          session_id: session.id,
-          round_number: currentRound.round_number
-        })
-      })
-
-      const nextRound = rounds.find((round) => round.round_number === currentRound.round_number + 1)
-      if (nextRound) {
-        await fetch("/api/round/start", {
+        const completeRes = await fetch("/api/round/complete", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             session_id: session.id,
-            round_number: nextRound.round_number
+            round_number: currentRound.round_number
           })
         })
-      }
-      // If no next round, session is marked 'completed' by the round/complete API
 
-      setSubmitting(false)
-      setTimeLeft(0)
+        if (!completeRes.ok) {
+          console.error('Round complete failed:', completeRes.status, await completeRes.text().catch(() => ''))
+        }
+
+        const nextRound = rounds.find((round) => round.round_number === currentRound.round_number + 1)
+        if (nextRound) {
+          const startRes = await fetch("/api/round/start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              session_id: session.id,
+              round_number: nextRound.round_number
+            })
+          })
+
+          if (startRes.ok) {
+            const startedRound = await startRes.json()
+            // Set the timer for the new round immediately (don't wait for real-time)
+            const durationMinutes = Number(startedRound?.duration_minutes || nextRound.duration_minutes || 0)
+            const startedAt = startedRound?.started_at
+              ? new Date(startedRound.started_at).getTime()
+              : Date.now()
+            const nextEndAt = startedAt + durationMinutes * 60 * 1000
+            setEndAt(nextEndAt)
+            setTimeLeft(Math.max(0, Math.ceil((nextEndAt - Date.now()) / 1000)))
+            autoSubmitFired.current = false
+          } else {
+            console.error('Round start failed:', startRes.status, await startRes.text().catch(() => ''))
+          }
+        }
+        // If no next round, session is marked 'completed' by the round/complete API
+      } catch (err) {
+        console.error('Auto-submit error:', err)
+        // Allow retry on failure
+        autoSubmitFired.current = false
+      } finally {
+        setSubmitting(false)
+        setTimeLeft(0)
+      }
       return
     }
 
@@ -536,6 +562,9 @@ function CandidateWorkspace() {
 
     setSubmitting(false)
   }
+
+  // Keep ref in sync so the timer always calls the latest version
+  handleSubmitRef.current = handleSubmit
 
   const submitFollowupAnswer = async () => {
     if (!pendingFollowup || !session || !currentRound) return
