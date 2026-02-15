@@ -1201,10 +1201,6 @@ function InterviewerView() {
                   )}
                   Send Candidate Link
                 </Button>
-<Button size="sm" variant="outline" onClick={() => sendAction('end_round')} disabled={!!sendingAction}>
-                  {sendingAction === 'end_round' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Clock3 className="h-4 w-4" />}
-                  End Round
-                </Button>
               </div>
 
               {actionNotice && (
