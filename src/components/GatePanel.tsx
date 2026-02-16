@@ -1,6 +1,7 @@
 'use client'
 
-import { AlertTriangle, CheckCircle2, Slash, ShieldAlert, TrendingUp, Loader2 } from "lucide-react"
+import { useState } from 'react'
+import { AlertTriangle, CheckCircle2, Slash, ShieldAlert, TrendingUp, Loader2, Sparkles } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -27,6 +28,9 @@ export interface GatePanelProps {
   onAction?: (action: "escalate") => void
   onAddFollowup?: (followup: string) => void
   loading?: boolean
+  // New: Expected dimensions from round rubric (for showing structure even when unscored)
+  expectedDimensions?: Array<{ name: string; description: string; maxScore: number }>
+  currentRoundNumber?: number
 }
 
 export function GatePanel({
@@ -39,15 +43,78 @@ export function GatePanel({
   onDecision,
   onAction,
   onAddFollowup,
-  loading
+  loading,
+  expectedDimensions,
+  currentRoundNumber
 }: GatePanelProps) {
+  // Merge expected dimensions with actual scores
+  const mergedDimensions = (() => {
+    if (!expectedDimensions || expectedDimensions.length === 0) {
+      return dimensions ?? []
+    }
+
+    // Create a map of scored dimensions
+    const scoredMap = new Map(
+      (dimensions ?? []).map(d => [d.label.toLowerCase().replace(/\s+/g, '_'), d])
+    )
+
+    // Merge expected with scored
+    return expectedDimensions.map(expected => {
+      const scored = scoredMap.get(expected.name)
+      return {
+        label: expected.name,
+        score: scored?.score ?? 0,
+        max: expected.maxScore,
+        description: expected.description,
+        status: scored ? 'scored' : 'pending'
+      }
+    })
+  })()
+
   const resolved = {
     overall: overall ?? 0,
     confidence: confidence ?? 0,
-    dimensions: dimensions ?? [],
+    dimensions: mergedDimensions,
     redFlags: redFlags ?? [],
     truthLog: truthLog ?? [],
     followups: followups ?? []
+  }
+
+  const [summary, setSummary] = useState<string | null>(null)
+  const [summaryLoading, setSummaryLoading] = useState(false)
+  const [summaryError, setSummaryError] = useState<string | null>(null)
+
+  const hasScoreData =
+    resolved.overall > 0 ||
+    resolved.dimensions.some((d) => (d.score ?? 0) > 0) ||
+    resolved.redFlags.length > 0 ||
+    resolved.truthLog.length > 0
+
+  const fetchSummary = async () => {
+    setSummaryLoading(true)
+    setSummaryError(null)
+    try {
+      const res = await fetch('/api/ai/interview-summary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          overall: resolved.overall,
+          confidence: resolved.confidence,
+          dimensions: resolved.dimensions,
+          redFlags: resolved.redFlags,
+          truthLog: resolved.truthLog,
+          followups: resolved.followups
+        })
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data?.error || 'Failed to generate summary')
+      setSummary(data.summary || '')
+    } catch (err: any) {
+      setSummaryError(err?.message || 'Failed to generate summary')
+      setSummary(null)
+    } finally {
+      setSummaryLoading(false)
+    }
   }
 
   return (
@@ -79,21 +146,82 @@ export function GatePanel({
       </CardHeader>
 
       <CardContent className="space-y-5">
+        <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-4">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary flex items-center gap-1.5">
+              <Sparkles className="h-3.5 w-3.5" />
+              AI Summary
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!hasScoreData || summaryLoading}
+              onClick={fetchSummary}
+            >
+              {summaryLoading ? (
+                <>
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  Generating…
+                </>
+              ) : (
+                'Generate summary'
+              )}
+            </Button>
+          </div>
+          {summaryError && (
+            <p className="text-sm text-destructive">{summaryError}</p>
+          )}
+          {summary ? (
+            <p className="text-sm leading-relaxed text-muted-foreground">{summary}</p>
+          ) : !hasScoreData ? (
+            <p className="text-sm text-muted-foreground">
+              Complete rounds and trigger scoring to generate an AI summary of how the interview is going.
+            </p>
+          ) : null}
+        </div>
+
         <div className="space-y-3">
-          <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Dimension Scores</p>
+          <div className="flex items-center justify-between">
+            <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Dimension Scores</p>
+            {currentRoundNumber && (
+              <Badge variant="outline" className="text-[10px]">Round {currentRoundNumber}</Badge>
+            )}
+          </div>
           {resolved.dimensions.length === 0 && (
             <p className="text-sm text-muted-foreground">No scores yet.</p>
           )}
-          {resolved.dimensions.map((dimension) => {
+          {resolved.dimensions.map((dimension: any) => {
             const max = Number(dimension.max || 30)
             const value = Number(dimension.score || 0)
+            const isPending = dimension.status === 'pending'
+            const percentage = (value / max) * 100
+
             return (
-              <div key={dimension.label} className="space-y-1">
-                <div className="flex items-center justify-between text-sm">
-                  <span>{dimension.label.replace(/_/g, " ")}</span>
-                  <span className="font-medium">{value}</span>
+              <div key={dimension.label} className="space-y-1.5">
+                <div className="flex items-center justify-between text-sm gap-2">
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <span className="truncate" title={dimension.description}>
+                      {dimension.label.replace(/_/g, " ")}
+                    </span>
+                    {isPending && (
+                      <Badge variant="secondary" className="text-[9px] px-1.5 py-0">
+                        Pending
+                      </Badge>
+                    )}
+                  </div>
+                  <span className={`font-medium tabular-nums ${isPending ? 'text-muted-foreground' : ''}`}>
+                    {value}/{max}
+                  </span>
                 </div>
-                <Progress value={(value / max) * 100} />
+                <Progress
+                  value={percentage}
+                  className={isPending ? 'opacity-30' : ''}
+                />
+                {dimension.description && !isPending && value > 0 && (
+                  <p className="text-[10px] text-muted-foreground line-clamp-2">
+                    {dimension.description}
+                  </p>
+                )}
               </div>
             )
           })}
@@ -182,7 +310,7 @@ export function GatePanel({
             >
               <div className="text-xs font-semibold text-muted-foreground">{entry.dimension}</div>
               <p className="mt-2">&ldquo;{entry.quote}&rdquo;</p>
-              {entry.line !== undefined && entry.line !== null && (
+              {('line' in entry && entry.line != null) && (
                 <p className="mt-1 text-xs text-muted-foreground">Line {entry.line}</p>
               )}
             </div>

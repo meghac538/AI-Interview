@@ -558,6 +558,38 @@ function InterviewerView() {
     }
     return buildGateData(scores as any[], events as any[])
   }, [session?.status, isVoiceRealtimeActive, transcript, scores, events])
+
+  // Extract expected dimensions from current round's scoring rubric
+  const currentRoundRubric = useMemo(() => {
+    // Try active round first, then fall back to most recent completed round, then last round
+    const activeRound = rounds?.find((r: any) => r.status === 'active')
+    const completedRounds = rounds?.filter((r: any) => r.status === 'completed') || []
+    const mostRecentCompleted = completedRounds.length > 0
+      ? completedRounds.reduce((latest: any, current: any) =>
+          current.round_number > latest.round_number ? current : latest
+        )
+      : null
+    const targetRound = activeRound || mostRecentCompleted || rounds?.[rounds.length - 1]
+
+    if (!targetRound) {
+      return { expectedDimensions: [], roundNumber: undefined }
+    }
+
+    const rubricDimensions = targetRound.config?.scoring_rubric?.dimensions
+    if (!Array.isArray(rubricDimensions)) {
+      return { expectedDimensions: [], roundNumber: targetRound.round_number }
+    }
+
+    return {
+      expectedDimensions: rubricDimensions.map((d: any) => ({
+        name: d.name || '',
+        description: d.description || '',
+        maxScore: d.maxScore || 20
+      })),
+      roundNumber: targetRound.round_number
+    }
+  }, [rounds])
+
   const actionLog = useMemo(() => buildActionLog(events as any[]), [events])
   const resumeUrl = useMemo(() => resolveResumeUrl(artifacts as any[]), [artifacts])
   const activityData = useMemo(() => {
@@ -1149,6 +1181,12 @@ function InterviewerView() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="secondary" asChild>
+              <Link href={`/scorecard/${session.id}`}>
+                <FileText className="mr-2 h-4 w-4" />
+                Score Card
+              </Link>
+            </Button>
             <Button size="sm" variant="outline" onClick={() => void setSessionStatus('completed', 'interviewer_complete')}>
               Mark Completed
             </Button>
@@ -1516,6 +1554,8 @@ function InterviewerView() {
             truthLog={gateData.truthLog}
             followups={mergedGateFollowups}
             loading={!!sendingAction}
+            expectedDimensions={currentRoundRubric.expectedDimensions}
+            currentRoundNumber={currentRoundRubric.roundNumber}
             onDecision={sendDecision}
             onAction={(action) => {
               if (action === 'escalate') {
