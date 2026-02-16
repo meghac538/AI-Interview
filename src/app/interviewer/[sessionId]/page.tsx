@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { AlertTriangle, CheckCircle2, Slash } from 'lucide-react'
+import { AlertTriangle, BarChart3, BookOpenText, CheckCircle2, Clock, FileSearch, MessageSquareText, Slash } from 'lucide-react'
 import { useParams, useRouter } from 'next/navigation'
 import {
   ArrowLeft,
@@ -20,7 +20,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { GatePanel } from '@/components/GatePanel'
-import { ContributionGraph } from '@/components/ui/smoothui/contribution-graph'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
@@ -531,7 +531,6 @@ function InterviewerView() {
       answer?: string
     }>
   >([])
-  const [showNotes, setShowNotes] = useState(false)
   const [showFollowups, setShowFollowups] = useState(false)
   const [showControls, setShowControls] = useState(true)
   const [sendingAction, setSendingAction] = useState<string | null>(null)
@@ -602,20 +601,76 @@ function InterviewerView() {
 
   const actionLog = useMemo(() => buildActionLog(events as any[]), [events])
   const resumeUrl = useMemo(() => resolveResumeUrl(artifacts as any[]), [artifacts])
-  const activityData = useMemo(() => {
-    const dailyCounts = new Map<string, number>()
+  const candidateActivityMetrics = useMemo(() => {
+    const allEvents = (events as any[]) || []
+    const candidateActions = allEvents.filter((event) => event.event_type === 'candidate_action')
+    const candidateArtifacts = allEvents.filter((event) => event.event_type === 'artifact_submitted')
+    const followupAsked = allEvents.filter((event) => event.event_type === 'followup_question')
+    const followupAnswered = allEvents.filter((event) => event.event_type === 'followup_answer')
+    const redFlags = allEvents.filter((event) => event.event_type === 'red_flag_detected')
+    const completedRounds = (rounds || []).filter((round: any) => round.status === 'completed').length
+    const avgScore =
+      (scores || []).length > 0
+        ? Math.round(
+            (scores || []).reduce((sum: number, score: any) => sum + Number(score?.overall_score || 0), 0) /
+              (scores || []).length
+          )
+        : 0
 
-    for (const event of (events as any[]) || []) {
-      const date = new Date(event.created_at).toISOString().slice(0, 10)
-      dailyCounts.set(date, (dailyCounts.get(date) || 0) + 1)
-    }
+    const completionRate = rounds && rounds.length > 0 ? Math.round((completedRounds / rounds.length) * 100) : 0
+    const followupResponseRate =
+      followupAsked.length > 0 ? Math.round((followupAnswered.length / followupAsked.length) * 100) : 0
 
-    return [...dailyCounts.entries()].map(([date, count]) => ({
-      date,
-      count,
-      level: Math.min(4, Math.floor(count / 2))
-    }))
-  }, [events])
+    const latestCandidateActionAt =
+      candidateActions.length > 0
+        ? new Date(candidateActions[0].created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : null
+
+    return [
+      {
+        key: 'candidate-events',
+        label: 'Candidate Events',
+        value: candidateActions.length + candidateArtifacts.length,
+        helper: latestCandidateActionAt ? `Latest at ${latestCandidateActionAt}` : 'Awaiting first action',
+        icon: MessageSquareText
+      },
+      {
+        key: 'session-completion',
+        label: 'Round Completion',
+        value: `${completedRounds}/${rounds?.length || 0}`,
+        helper: `${completionRate}% completed`,
+        icon: BarChart3
+      },
+      {
+        key: 'followup-loop',
+        label: 'Follow-up Loop',
+        value: `${followupAnswered.length}/${followupAsked.length}`,
+        helper: `${followupResponseRate}% answered`,
+        icon: BookOpenText
+      },
+      {
+        key: 'artifact-velocity',
+        label: 'Artifacts Submitted',
+        value: artifacts.length,
+        helper: 'From assessment rounds',
+        icon: FileSearch
+      },
+      {
+        key: 'quality-signal',
+        label: 'Average Score',
+        value: avgScore > 0 ? avgScore : '--',
+        helper: 'Across completed scoring runs',
+        icon: CheckCircle2
+      },
+      {
+        key: 'risk-signal',
+        label: 'Risk Signals',
+        value: redFlags.length,
+        helper: redFlags.length > 0 ? 'Review flagged moments' : 'No active flags',
+        icon: Clock
+      }
+    ]
+  }, [artifacts.length, events, rounds, scores])
   const noAnswerFlag = useMemo(() => {
     return gateData.redFlags.some((flag) =>
       ['insufficient_response', 'no_evidence'].includes(flag.label)
@@ -1344,6 +1399,30 @@ function InterviewerView() {
             </CardContent>
           </Card>
 
+          <Card className="xl:col-span-2">
+            <CardHeader>
+              <CardTitle className="text-base">Candidate Activity</CardTitle>
+              <CardDescription>
+                Live analytics from session events, scores, artifacts, and round progression.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {candidateActivityMetrics.map((metric) => {
+                const MetricIcon = metric.icon
+                return (
+                  <div key={metric.key} className="rounded-2xl border border-border/60 bg-background/35 px-4 py-3 backdrop-blur">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">{metric.label}</p>
+                      <MetricIcon className="h-4 w-4 text-primary" />
+                    </div>
+                    <p className="mt-2 text-2xl font-semibold tracking-tight">{metric.value}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{metric.helper}</p>
+                  </div>
+                )
+              })}
+            </CardContent>
+          </Card>
+
           {autoStopTriggered && (
             <div className="rounded-lg border-2 border-destructive/40 bg-destructive/10 px-5 py-4 animate-pulse xl:col-span-2">
               <div className="flex items-center gap-3">
@@ -1812,52 +1891,142 @@ function InterviewerView() {
           </Card>
 
           <Card className="xl:col-span-2">
-            <CardHeader className="py-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-base">Interviewer Notes</CardTitle>
-                  <CardDescription className="text-xs mt-0.5">Saved to session action logs when submitted.</CardDescription>
-                </div>
-                <Button variant="ghost" size="sm" onClick={() => setShowNotes((prev) => !prev)}>
-                  {showNotes ? 'Hide' : 'Show'}
-                </Button>
-              </div>
+            <CardHeader>
+              <CardTitle className="text-base">Interviewer Workspace Tools</CardTitle>
+              <CardDescription>
+                Focused actions with immersive glass modals for note capture and resume deep-view.
+              </CardDescription>
             </CardHeader>
-            {showNotes && (<CardContent className="space-y-3">
-              <Textarea
-                rows={6}
-                value={notes}
-                onChange={(event) => setNotes(event.target.value)}
-                placeholder="Capture context for final recommendation, concern areas, and decision rationale..."
-              />
-              <Button
-                variant="secondary"
-                disabled={!!sendingAction || !notes.trim()}
-                onClick={async () => {
-                  if (!notes.trim()) return
-                  const result = await sendAction('interviewer_note', { note: notes })
-                  if (result?.ok) {
-                    setNotes('')
-                    setNoteSavedToast(true)
-                    setTimeout(() => setNoteSavedToast(false), 2500)
-                  }
-                }}
-              >
-                {sendingAction === 'interviewer_note' ? <Loader2 className="h-4 w-4 animate-spin" /> : <BadgeCheck className="h-4 w-4" />}
-                {sendingAction === 'interviewer_note' ? 'Saving...' : 'Save Note'}
-              </Button>
-              <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
-                <ShieldAlert className="mb-2 h-4 w-4" />
-                All interviewer actions, notes, and magic-link events are logged for audit and post-assessment review.
-              </div>
-              {noteSavedToast && (
-                <div className="flex items-center gap-2 rounded-lg border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-600 dark:text-emerald-400 animate-in fade-in slide-in-from-top-1 duration-200">
-                  <CheckCircle2 className="h-4 w-4 shrink-0" />
-                  Note saved successfully.
-                </div>
-              )}
+            <CardContent className="grid gap-3 sm:grid-cols-2">
+              <Dialog>
+                <DialogTrigger asChild>
+                  <button
+                    type="button"
+                    className="group flex w-full items-center justify-between rounded-2xl border border-border/60 bg-background/40 px-4 py-4 text-left transition hover:bg-background/55"
+                  >
+                    <div>
+                      <p className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Interviewer</p>
+                      <p className="mt-1 text-base font-semibold">Notes Studio</p>
+                      <p className="mt-1 text-xs text-muted-foreground">Capture decision rationale and audit context.</p>
+                    </div>
+                    <MessageSquareText className="h-6 w-6 text-primary transition group-hover:scale-105" />
+                  </button>
+                </DialogTrigger>
+                <DialogContent className="glass-surface border-0 bg-transparent p-0 sm:max-w-3xl">
+                  <div className="relative overflow-hidden rounded-[26px] p-6 sm:p-7">
+                    <div className="glass-glow" aria-hidden="true" />
+                    <div className="glass-highlight" aria-hidden="true" />
+                    <div className="glass-inner-shadow" aria-hidden="true" />
+                    <div className="relative z-10 space-y-4">
+                      <DialogHeader>
+                        <DialogTitle className="text-xl">Interviewer Notes</DialogTitle>
+                        <DialogDescription>Saved to session action logs for traceability.</DialogDescription>
+                      </DialogHeader>
+                      <Textarea
+                        rows={8}
+                        value={notes}
+                        onChange={(event) => setNotes(event.target.value)}
+                        placeholder="Capture context for final recommendation, concern areas, and decision rationale..."
+                        className="rounded-2xl bg-background/45"
+                      />
+                      <Button
+                        variant="secondary"
+                        disabled={!!sendingAction || !notes.trim()}
+                        onClick={async () => {
+                          if (!notes.trim()) return
+                          const result = await sendAction('interviewer_note', { note: notes })
+                          if (result?.ok) {
+                            setNotes('')
+                            setNoteSavedToast(true)
+                            setTimeout(() => setNoteSavedToast(false), 2500)
+                          }
+                        }}
+                      >
+                        {sendingAction === 'interviewer_note' ? <Loader2 className="h-4 w-4 animate-spin" /> : <BadgeCheck className="h-4 w-4" />}
+                        {sendingAction === 'interviewer_note' ? 'Saving...' : 'Save Note'}
+                      </Button>
+                      <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
+                        <ShieldAlert className="mb-2 h-4 w-4" />
+                        All interviewer actions, notes, and candidate-entry events are retained for post-assessment review.
+                      </div>
+                      {noteSavedToast && (
+                        <div className="flex items-center gap-2 rounded-lg border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-600 dark:text-emerald-400 animate-in fade-in slide-in-from-top-1 duration-200">
+                          <CheckCircle2 className="h-4 w-4 shrink-0" />
+                          Note saved successfully.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </DialogContent>
+              </Dialog>
+
+              <Dialog>
+                <DialogTrigger asChild>
+                  <button
+                    type="button"
+                    className="group flex w-full items-center justify-between rounded-2xl border border-border/60 bg-background/40 px-4 py-4 text-left transition hover:bg-background/55"
+                  >
+                    <div>
+                      <p className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Candidate</p>
+                      <p className="mt-1 text-base font-semibold">Resume Viewer</p>
+                      <p className="mt-1 text-xs text-muted-foreground">Preview uploaded resume with full context.</p>
+                    </div>
+                    <FileSearch className="h-6 w-6 text-primary transition group-hover:scale-105" />
+                  </button>
+                </DialogTrigger>
+                <DialogContent className="glass-surface border-0 bg-transparent p-0 sm:max-w-6xl">
+                  <div className="relative overflow-hidden rounded-[26px] p-6 sm:p-7">
+                    <div className="glass-glow" aria-hidden="true" />
+                    <div className="glass-highlight" aria-hidden="true" />
+                    <div className="glass-inner-shadow" aria-hidden="true" />
+                    <div className="relative z-10 space-y-4">
+                      <DialogHeader>
+                        <DialogTitle className="text-xl">Quick Resume View</DialogTitle>
+                        <DialogDescription>Live file from candidate artifacts or profile storage path.</DialogDescription>
+                      </DialogHeader>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="text-xs text-muted-foreground">
+                          {resumePreviewState === 'loading'
+                            ? 'Loading resume preview...'
+                            : resumePreviewState === 'ready'
+                              ? resumePreview?.filename || 'Resume PDF'
+                              : resumePreviewState === 'missing'
+                                ? 'No resume uploaded for this candidate.'
+                                : resumePreviewState === 'error'
+                                  ? resumePreviewError || 'Unable to load resume preview.'
+                                  : ''}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button size="sm" variant="outline" onClick={() => void fetchResumePreview(session.id)}>
+                            Refresh
+                          </Button>
+                          {resolvedResumeUrl && (
+                            <Button size="sm" variant="outline" asChild>
+                              <a href={resolvedResumeUrl} target="_blank" rel="noreferrer">
+                                <ExternalLink className="h-4 w-4" />
+                                Open
+                              </a>
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="overflow-hidden rounded-lg border">
+                        {resolvedResumeUrl ? (
+                          <iframe src={resolvedResumeUrl} title="Candidate resume preview" className="h-[70vh] w-full" />
+                        ) : (
+                          <div className="flex h-[240px] items-center justify-center bg-muted/20 p-6 text-sm text-muted-foreground">
+                            Resume PDF not available yet. Upload a resume to the `resumes` storage bucket and set
+                            `candidates.resume_storage_path`, or attach a PDF artifact to this session.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </DialogContent>
+              </Dialog>
             </CardContent>
-            )}
           </Card>
 
           <Card className="xl:col-span-2">
@@ -2030,66 +2199,6 @@ function InterviewerView() {
             )}
           </Card>
 
-          <Card className="xl:col-span-2">
-            <CardHeader>
-              <CardTitle className="text-base">Hiring Manager Activity Map</CardTitle>
-              <CardDescription>Heatmap view of session event intensity.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ContributionGraph data={activityData} showLegend year={new Date().getFullYear()} />
-            </CardContent>
-          </Card>
-
-          <Card className="xl:col-span-2">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <FileText className="h-4 w-4 text-primary" />
-                Quick Resume View
-              </CardTitle>
-              <CardDescription>
-                Preview the uploaded resume PDF for this candidate. No hardcoded resume content is shown.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-xs text-muted-foreground">
-                  {resumePreviewState === 'loading'
-                    ? 'Loading resume preview...'
-                    : resumePreviewState === 'ready'
-                      ? resumePreview?.filename || 'Resume PDF'
-                      : resumePreviewState === 'missing'
-                        ? 'No resume uploaded for this candidate.'
-                        : resumePreviewState === 'error'
-                          ? resumePreviewError || 'Unable to load resume preview.'
-                          : ''}
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button size="sm" variant="outline" onClick={() => void fetchResumePreview(session.id)}>
-                    Refresh
-                  </Button>
-                  {resolvedResumeUrl && (
-                    <Button size="sm" variant="outline" asChild>
-                      <a href={resolvedResumeUrl} target="_blank" rel="noreferrer">
-                        <ExternalLink className="h-4 w-4" />
-                        Open
-                      </a>
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              <div className="mt-3 overflow-hidden rounded-lg border">
-                {resolvedResumeUrl ? (
-                  <iframe src={resolvedResumeUrl} title="Candidate resume preview" className="h-[640px] w-full" />
-                ) : (
-                  <div className="flex h-[240px] items-center justify-center bg-muted/20 p-6 text-sm text-muted-foreground">
-                    Resume PDF not available yet. Upload a resume to the `resumes` storage bucket and set
-                    `candidates.resume_storage_path`, or attach a PDF artifact to this session.
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
         </section>
 
         <aside className="space-y-6">
