@@ -77,24 +77,32 @@ curl -X POST http://localhost:3000/api/session/create \
 ```
 Use the returned `session.id` to visit: `http://localhost:3000/candidate/{session.id}`
 
-## Sales Interview Flow
+## Supported Tracks & Round Types
 
-### Round 1: Live Persona Sell (12 min)
-Text chat with AI prospect Sarah Chen. Requirements:
-- Ask discovery questions
-- Handle objections
-- Quantify value proposition
-- Professional closing
+The platform auto-detects the interview track from the role name, or you can specify it explicitly. Each track generates a tailored round plan with appropriate question types.
 
-### Round 2: Negotiation via Email (15 min)
-Email thread with system responses. Requirements:
-- Send 2 email responses
-- Maintain professional tone
-- Protect margins
-- Handle escalating objections
+### Tracks
 
-### Round 3: Follow-up Discipline (5 min)
-Internal handoff note (optional)
+| Track | Example Roles |
+|-------|--------------|
+| Sales | Account Executive, BDR, SDR, Solutions AE |
+| Implementation | Solutions Consultant, Client Delivery, Customer Outcomes |
+| Marketing | Growth Marketing, Brand Strategist, Campaign Ops |
+| Engineering | Fullstack, Agentic Eng, Security, Data |
+| HR | People Ops, Talent Acquisition |
+
+### Round Types
+
+| Type | Format | Description |
+|------|--------|-------------|
+| `text` | Written response | Candidate writes a structured answer to a prompt |
+| `email` | Email thread | Back-and-forth email exchange with AI-simulated recipient |
+| `voice-realtime` | Live voice call | Real-time voice conversation via ElevenLabs |
+| `code` | Code editor | Write and submit code to solve a technical challenge |
+| `mcq` | Multiple choice | Select answers from predefined options |
+| `agentic` | Multi-channel chat | Customer + internal team channels with AI personas |
+
+Rounds are auto-generated based on track, role, and difficulty level. The interviewer can end rounds early, skip rounds, or force-advance via the dashboard.
 
 ## Project Structure
 
