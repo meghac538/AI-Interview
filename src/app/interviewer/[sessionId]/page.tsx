@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { AlertTriangle, CheckCircle2, Slash } from 'lucide-react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import {
   ArrowLeft,
   BadgeCheck,
@@ -13,7 +13,8 @@ import {
   FileText,
   Link2,
   Loader2,
-  ShieldAlert
+  ShieldAlert,
+  Sparkles
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -496,6 +497,7 @@ function resolveResumeUrl(artifacts: any[]) {
 }
 
 function InterviewerView() {
+  const router = useRouter()
   const { session, scopePackage, scores, events, rounds, artifacts, refresh } = useSession()
   const [notes, setNotes] = useState('')
   const [magicLink, setMagicLink] = useState<string | null>(null)
@@ -535,6 +537,14 @@ function InterviewerView() {
   const [sendingAction, setSendingAction] = useState<string | null>(null)
   const [curveball, setCurveball] = useState('')
   const [customCurveball, setCustomCurveball] = useState('')
+  const [aiCurveballSuggestions, setAiCurveballSuggestions] = useState<Array<{
+    id: string; title: string; detail: string; rationale: string;
+    priority: string; source_evidence: string
+  }>>([])
+  const [curveballSuggestionsLoading, setCurveballSuggestionsLoading] = useState(false)
+  const [curveballSuggestionsContext, setCurveballSuggestionsContext] = useState('')
+  const [scorecardOpening, setScorecardOpening] = useState(false)
+  const [sessionStatusLoading, setSessionStatusLoading] = useState<string | null>(null)
   const [persona, setPersona] = useState('')
   const [customPersona, setCustomPersona] = useState('')
   const [escalationLevel, setEscalationLevel] = useState('L3')
@@ -1075,6 +1085,47 @@ function InterviewerView() {
     setCustomCurveball('')
   }
 
+  const fetchCurveballSuggestions = async () => {
+    if (!session) return
+    const activeRound = (rounds || []).find((r) => r.status === 'active')
+    if (!activeRound || activeRound.round_type !== 'text') return
+    setCurveballSuggestionsLoading(true)
+    setCurveballSuggestionsContext('')
+    try {
+      const res = await fetch('/api/ai/curveball-suggest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: session.id,
+          round_number: activeRound.round_number
+        })
+      })
+      const data = await res.json()
+      setAiCurveballSuggestions(data.suggestions || [])
+      setCurveballSuggestionsContext(data.context_summary || data.error || '')
+    } catch {
+      setAiCurveballSuggestions([])
+      setCurveballSuggestionsContext('Network error — could not reach server.')
+    } finally {
+      setCurveballSuggestionsLoading(false)
+    }
+  }
+
+  const approveAiCurveball = async (suggestion: typeof aiCurveballSuggestions[0]) => {
+    await sendAction('inject_curveball', {
+      curveball_key: `ai_suggested_${Date.now()}`,
+      custom_text: suggestion.detail,
+      target_round: null,
+    })
+    // Clear all suggestions after injecting one
+    setAiCurveballSuggestions([])
+    setCurveballSuggestionsContext('')
+  }
+
+  const dismissAiCurveball = (suggestionId: string) => {
+    setAiCurveballSuggestions((prev) => prev.filter((s) => s.id !== suggestionId))
+  }
+
   const switchPersona = async (personaKey: string) => {
     await sendAction('switch_persona', {
       persona: personaKey,
@@ -1135,20 +1186,25 @@ function InterviewerView() {
     session.status === 'live' ? 'default' : session.status === 'completed' ? 'secondary' : 'outline'
 
   const setSessionStatus = async (status: 'completed' | 'aborted', reason?: string) => {
-    const response = await fetch(`/api/session/${session.id}/status`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status, reason: reason || null })
-    })
+    setSessionStatusLoading(status)
+    try {
+      const response = await fetch(`/api/session/${session.id}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, reason: reason || null })
+      })
 
-    const data = await response.json().catch(() => ({}))
-    if (!response.ok) {
-      setActionNotice({ kind: 'error', message: data?.error || 'Failed to update session status.' })
-      return
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        setActionNotice({ kind: 'error', message: data?.error || 'Failed to update session status.' })
+        return
+      }
+
+      setActionNotice({ kind: 'success', message: `Session marked ${status}.` })
+      refresh().catch(() => {})
+    } finally {
+      setSessionStatusLoading(null)
     }
-
-    setActionNotice({ kind: 'success', message: `Session marked ${status}.` })
-    refresh().catch(() => {})
   }
 
   const resolvedResumeUrl = resumePreview?.signedUrl || resumeUrl
@@ -1181,17 +1237,27 @@ function InterviewerView() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="secondary" asChild>
-              <Link href={`/scorecard/${session.id}`}>
-                <FileText className="mr-2 h-4 w-4" />
-                Score Card
-              </Link>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={scorecardOpening}
+              onClick={() => {
+                setScorecardOpening(true)
+                router.push(`/scorecard/${session.id}`)
+              }}
+            >
+              {scorecardOpening
+                ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                : <FileText className="mr-2 h-4 w-4" />}
+              {scorecardOpening ? 'Loading...' : 'Score Card'}
             </Button>
-            <Button size="sm" variant="outline" onClick={() => void setSessionStatus('completed', 'interviewer_complete')}>
-              Mark Completed
+            <Button size="sm" variant="outline" disabled={sessionStatusLoading !== null} onClick={() => void setSessionStatus('completed', 'interviewer_complete')}>
+              {sessionStatusLoading === 'completed' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {sessionStatusLoading === 'completed' ? 'Completing...' : 'Mark Completed'}
             </Button>
-            <Button size="sm" variant="destructive" onClick={() => void setSessionStatus('aborted', 'interviewer_abort')}>
-              Abort Session
+            <Button size="sm" variant="destructive" disabled={sessionStatusLoading !== null} onClick={() => void setSessionStatus('aborted', 'interviewer_abort')}>
+              {sessionStatusLoading === 'aborted' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {sessionStatusLoading === 'aborted' ? 'Aborting...' : 'Abort Session'}
             </Button>
             <ThemeToggle />
           </div>
@@ -1662,6 +1728,94 @@ function InterviewerView() {
                                 </div>
                               )
                             })}
+                          </div>
+                        )
+                      })()}
+
+                      {/* AI Curveball Suggestions — text rounds only */}
+                      {(() => {
+                        const isTextRound = activeRound?.round_type === 'text'
+                        return (
+                          <div className="mt-3 space-y-2 border-t border-dashed pt-3">
+                            <div className="flex items-center justify-between">
+                              <label className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                                <Sparkles className="h-3 w-3" />
+                                AI Suggestions
+                              </label>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 px-2 text-[10px]"
+                                disabled={curveballSuggestionsLoading || !isTextRound || session?.status !== 'live'}
+                                onClick={fetchCurveballSuggestions}
+                              >
+                                {curveballSuggestionsLoading ? (
+                                  <><Loader2 className="mr-1 h-3 w-3 animate-spin" />Analyzing...</>
+                                ) : (
+                                  'Suggest'
+                                )}
+                              </Button>
+                            </div>
+
+                            {!isTextRound && (
+                              <p className="text-[10px] text-muted-foreground">
+                                AI suggestions available for text rounds only.
+                              </p>
+                            )}
+
+                            {curveballSuggestionsContext && (
+                              <p className="text-[10px] text-muted-foreground">
+                                {curveballSuggestionsContext}
+                              </p>
+                            )}
+
+                            {isTextRound && aiCurveballSuggestions.length === 0 && !curveballSuggestionsLoading && !curveballSuggestionsContext && (
+                              <p className="text-[10px] text-muted-foreground">
+                                Click &ldquo;Suggest&rdquo; to analyze candidate&apos;s response and get targeted curveball ideas.
+                              </p>
+                            )}
+
+                            {aiCurveballSuggestions.map((suggestion) => (
+                              <div key={suggestion.id} className="space-y-1.5 rounded-lg border p-3">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-medium">{suggestion.title}</span>
+                                  <Badge
+                                    variant={suggestion.priority === 'high' ? 'destructive' : 'secondary'}
+                                    className="h-4 px-1.5 text-[9px]"
+                                  >
+                                    {suggestion.priority}
+                                  </Badge>
+                                </div>
+                                <p className="text-xs text-foreground">{suggestion.detail}</p>
+                                <p className="text-[10px] italic text-muted-foreground">
+                                  Why: {suggestion.rationale}
+                                </p>
+                                {suggestion.source_evidence && (
+                                  <p className="text-[10px] text-muted-foreground">
+                                    Based on: &ldquo;{suggestion.source_evidence.slice(0, 100)}&rdquo;
+                                  </p>
+                                )}
+                                <div className="flex gap-2 pt-1">
+                                  <Button
+                                    size="sm"
+                                    variant="default"
+                                    className="h-6 px-2 text-[10px]"
+                                    disabled={!!sendingAction}
+                                    onClick={() => approveAiCurveball(suggestion)}
+                                  >
+                                    Inject
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-6 px-2 text-[10px]"
+                                    onClick={() => dismissAiCurveball(suggestion.id)}
+                                  >
+                                    Dismiss
+                                  </Button>
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         )
                       })()}

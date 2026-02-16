@@ -291,12 +291,14 @@ export async function POST(request: Request) {
         // For non-conversational rounds, displaying the curveball IS the consumption.
         // Emit curveball_used immediately so the dashboard shows "Used" instead of "Pending".
         if (!CONVERSATIONAL_ROUNDS.has(roundType)) {
+          const originalKey = payload?.curveball_key || payload?.curveball || definition.key
           await supabaseAdmin.from('live_events').insert({
             session_id,
             event_type: 'curveball_used',
             actor: 'system',
             payload: {
-              curveball: definition.key,
+              curveball: originalKey,
+              definition_key: definition.key,
               round_number: targetRoundNumber,
               source: 'auto_display'
             }
