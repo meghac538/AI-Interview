@@ -4,7 +4,6 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { AlertTriangle, CheckCircle2, TrendingUp, TrendingDown, Minus, Clock, Award, FileText, XCircle, Zap } from "lucide-react"
-import { format } from "date-fns"
 
 interface DimensionScore {
   name: string
@@ -50,6 +49,19 @@ interface SessionData {
   sessionStatus: 'completed' | 'live' | 'scheduled'
   createdAt: string
   completedAt?: string
+}
+
+function formatDateTime(value?: string) {
+  if (!value) return "N/A"
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return "N/A"
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  })
 }
 
 export interface ScoreCardProps {
@@ -165,12 +177,12 @@ export function ScoreCard({
             </div>
             <div>
               <span className="font-medium">Started:</span>{' '}
-              {format(new Date(sessionData.createdAt), 'MMM d, yyyy h:mm a')}
+              {formatDateTime(sessionData.createdAt)}
             </div>
             {sessionData.completedAt && (
               <div>
                 <span className="font-medium">Completed:</span>{' '}
-                {format(new Date(sessionData.completedAt), 'MMM d, yyyy h:mm a')}
+                {formatDateTime(sessionData.completedAt)}
               </div>
             )}
           </div>
