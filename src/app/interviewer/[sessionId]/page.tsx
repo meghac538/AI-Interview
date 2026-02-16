@@ -19,9 +19,9 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { GatePanel } from '@/components/GatePanel'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
 import { SessionProvider, useSession } from '@/contexts/SessionContext'
 import { getRoleWidgetTemplate, normalizeRoleWidgetConfig, roleWidgetFamilies } from '@/lib/role-widget-templates'
@@ -2174,8 +2174,8 @@ function InterviewerView() {
         </aside>
         <aside className="space-y-2 xl:sticky xl:top-20 xl:h-fit">
           <p className="px-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Widgets</p>
-          <Dialog>
-            <DialogTrigger asChild>
+          <Sheet>
+            <SheetTrigger asChild>
               <button
                 type="button"
                 className="group flex w-full items-center gap-3 rounded-xl border border-border/70 bg-background/45 px-3 py-3 text-left transition hover:bg-background/65"
@@ -2186,12 +2186,12 @@ function InterviewerView() {
                   <p className="text-[11px] text-muted-foreground">Interviewer context</p>
                 </div>
               </button>
-            </DialogTrigger>
-            <DialogContent className="max-w-3xl rounded-2xl border-border/70 bg-background/95 p-6 backdrop-blur-xl duration-300 data-[state=open]:zoom-in-100 data-[state=closed]:zoom-out-95 data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0">
-                  <DialogHeader>
-                    <DialogTitle className="text-xl">Interviewer Notes</DialogTitle>
-                    <DialogDescription>Saved to session action logs for traceability.</DialogDescription>
-                  </DialogHeader>
+            </SheetTrigger>
+            <SheetContent side="right" className="w-[min(92vw,680px)] sm:max-w-none border-border/70 bg-background/95 p-6 backdrop-blur-xl">
+                  <SheetHeader>
+                    <SheetTitle className="text-xl">Interviewer Notes</SheetTitle>
+                    <SheetDescription>Saved to session action logs for traceability.</SheetDescription>
+                  </SheetHeader>
                   <div className="mt-3 space-y-3">
                     <Textarea
                       rows={8}
@@ -2222,11 +2222,11 @@ function InterviewerView() {
                       </div>
                     ) : null}
                   </div>
-                </DialogContent>
-          </Dialog>
+                </SheetContent>
+          </Sheet>
 
-          <Dialog>
-            <DialogTrigger asChild>
+          <Sheet>
+            <SheetTrigger asChild>
               <button
                 type="button"
                 className="group flex w-full items-center gap-3 rounded-xl border border-border/70 bg-background/45 px-3 py-3 text-left transition hover:bg-background/65"
@@ -2237,12 +2237,12 @@ function InterviewerView() {
                   <p className="text-[11px] text-muted-foreground">Candidate PDF view</p>
                 </div>
               </button>
-            </DialogTrigger>
-            <DialogContent className="max-w-6xl rounded-2xl border-border/70 bg-background/95 p-6 backdrop-blur-xl duration-300 data-[state=open]:zoom-in-100 data-[state=closed]:zoom-out-95 data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0">
-                  <DialogHeader>
-                    <DialogTitle className="text-xl">Quick Resume View</DialogTitle>
-                    <DialogDescription>Live file from candidate artifacts or profile storage path.</DialogDescription>
-                  </DialogHeader>
+            </SheetTrigger>
+            <SheetContent side="right" className="w-[min(96vw,1200px)] sm:max-w-none border-border/70 bg-background/95 p-6 backdrop-blur-xl">
+                  <SheetHeader>
+                    <SheetTitle className="text-xl">Quick Resume View</SheetTitle>
+                    <SheetDescription>Live file from candidate artifacts or profile storage path.</SheetDescription>
+                  </SheetHeader>
                   <div className="mt-3 space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="text-xs text-muted-foreground">
@@ -2272,7 +2272,7 @@ function InterviewerView() {
                     </div>
                     <div className="overflow-hidden rounded-xl border">
                       {resolvedResumeUrl ? (
-                        <iframe src={resolvedResumeUrl} title="Candidate resume preview" className="h-[70vh] w-full" />
+                        <iframe src={resolvedResumeUrl} title="Candidate resume preview" className="h-[82vh] w-full" />
                       ) : (
                         <div className="flex h-[240px] items-center justify-center bg-muted/20 p-6 text-sm text-muted-foreground">
                           Resume PDF not available yet.
@@ -2280,11 +2280,11 @@ function InterviewerView() {
                       )}
                     </div>
                   </div>
-                </DialogContent>
-          </Dialog>
+                </SheetContent>
+          </Sheet>
 
-          <Dialog>
-            <DialogTrigger asChild>
+          <Sheet>
+            <SheetTrigger asChild>
               <button
                 type="button"
                 className="group flex w-full items-center gap-3 rounded-xl border border-border/70 bg-background/45 px-3 py-3 text-left transition hover:bg-background/65"
@@ -2295,13 +2295,13 @@ function InterviewerView() {
                   <p className="text-[11px] text-muted-foreground">Conversation feed</p>
                 </div>
               </button>
-            </DialogTrigger>
-            <DialogContent className="max-w-4xl rounded-2xl border-border/70 bg-background/95 p-6 backdrop-blur-xl duration-300 data-[state=open]:zoom-in-100 data-[state=closed]:zoom-out-95 data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0">
-                  <DialogHeader>
-                    <DialogTitle className="text-xl">Live Transcript</DialogTitle>
-                    <DialogDescription>Conversation and candidate statements in chronological order.</DialogDescription>
-                  </DialogHeader>
-                  <div className="hide-scrollbar mt-3 max-h-[70vh] space-y-3 overflow-y-auto pr-1">
+            </SheetTrigger>
+            <SheetContent side="right" className="w-[min(96vw,860px)] sm:max-w-none border-border/70 bg-background/95 p-6 backdrop-blur-xl">
+                  <SheetHeader>
+                    <SheetTitle className="text-xl">Live Transcript</SheetTitle>
+                    <SheetDescription>Conversation and candidate statements in chronological order.</SheetDescription>
+                  </SheetHeader>
+                  <div className="hide-scrollbar mt-3 max-h-[calc(100vh-9rem)] space-y-3 overflow-y-auto pr-1">
                     {transcript.length === 0 ? (
                       <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
                         Transcript will populate after the conversation starts.
@@ -2318,11 +2318,11 @@ function InterviewerView() {
                       ))
                     )}
                   </div>
-                </DialogContent>
-          </Dialog>
+                </SheetContent>
+          </Sheet>
 
-          <Dialog>
-            <DialogTrigger asChild>
+          <Sheet>
+            <SheetTrigger asChild>
               <button
                 type="button"
                 className="group flex w-full items-center gap-3 rounded-xl border border-border/70 bg-background/45 px-3 py-3 text-left transition hover:bg-background/65"
@@ -2333,13 +2333,13 @@ function InterviewerView() {
                   <p className="text-[11px] text-muted-foreground">Event timeline</p>
                 </div>
               </button>
-            </DialogTrigger>
-            <DialogContent className="max-w-4xl rounded-2xl border-border/70 bg-background/95 p-6 backdrop-blur-xl duration-300 data-[state=open]:zoom-in-100 data-[state=closed]:zoom-out-95 data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0">
-                  <DialogHeader>
-                    <DialogTitle className="text-xl">Candidate Action Log</DialogTitle>
-                    <DialogDescription>System timeline of candidate and interview actions.</DialogDescription>
-                  </DialogHeader>
-                  <div className="hide-scrollbar mt-3 max-h-[70vh] space-y-2 overflow-y-auto pr-1">
+            </SheetTrigger>
+            <SheetContent side="right" className="w-[min(96vw,900px)] sm:max-w-none border-border/70 bg-background/95 p-6 backdrop-blur-xl">
+                  <SheetHeader>
+                    <SheetTitle className="text-xl">Candidate Action Log</SheetTitle>
+                    <SheetDescription>System timeline of candidate and interview actions.</SheetDescription>
+                  </SheetHeader>
+                  <div className="hide-scrollbar mt-3 max-h-[calc(100vh-9rem)] space-y-2 overflow-y-auto pr-1">
                     {actionLog.length === 0 ? (
                       <p className="text-sm text-muted-foreground">Waiting for actions...</p>
                     ) : (
@@ -2352,8 +2352,8 @@ function InterviewerView() {
                       ))
                     )}
                   </div>
-                </DialogContent>
-          </Dialog>
+                </SheetContent>
+          </Sheet>
         </aside>
         </div>
       </div>
