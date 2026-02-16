@@ -1211,7 +1211,7 @@ function InterviewerView() {
 
   return (
     <main className="surface-grid min-h-screen px-4 py-8 md:px-8">
-      <div className="mx-auto w-full max-w-7xl space-y-5">
+      <div className="mx-auto w-full max-w-[1820px] space-y-5">
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" asChild>
@@ -1263,9 +1263,9 @@ function InterviewerView() {
           </div>
         </header>
 
-        <div className="grid w-full gap-6 lg:grid-cols-[1.15fr,1fr]">
-        <section className="space-y-6">
-          <Card>
+        <div className="grid w-full gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
+        <section className="grid auto-rows-max gap-6 xl:grid-cols-2">
+          <Card className="xl:col-span-2">
             <CardHeader className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -1345,7 +1345,7 @@ function InterviewerView() {
           </Card>
 
           {autoStopTriggered && (
-            <div className="rounded-lg border-2 border-destructive/40 bg-destructive/10 px-5 py-4 animate-pulse">
+            <div className="rounded-lg border-2 border-destructive/40 bg-destructive/10 px-5 py-4 animate-pulse xl:col-span-2">
               <div className="flex items-center gap-3">
                 <AlertTriangle className="h-5 w-5 text-destructive" />
                 <div>
@@ -1363,7 +1363,7 @@ function InterviewerView() {
               <CardTitle className="text-base">Live Transcript</CardTitle>
               <CardDescription>Conversation and candidate statements in chronological order.</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent className="hide-scrollbar max-h-[420px] space-y-3 overflow-y-auto pr-1">
               {transcript.length === 0 && (
                 <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
                   Transcript will populate after the conversation starts.
@@ -1385,7 +1385,7 @@ function InterviewerView() {
             <CardHeader>
               <CardTitle className="text-base">Round Timeline</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2">
+            <CardContent className="hide-scrollbar max-h-[360px] space-y-2 overflow-y-auto pr-1">
               {roundTimeline.length === 0 && (
                 <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
                   No rounds are loaded for this session.
@@ -1418,7 +1418,7 @@ function InterviewerView() {
             <CardHeader>
               <CardTitle className="text-base">Candidate Action Log</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2">
+            <CardContent className="hide-scrollbar max-h-[320px] space-y-2 overflow-y-auto pr-1">
               {actionLog.length === 0 && <p className="text-sm text-muted-foreground">Waiting for actions...</p>}
               {actionLog.map((entry, index) => (
                 <div key={`${entry.time}-${index}`} className="grid grid-cols-[1fr,1fr,auto] items-center gap-2 text-sm">
@@ -1429,7 +1429,7 @@ function InterviewerView() {
               ))}
             </CardContent>
           </Card>
-          <Card>
+          <Card className="xl:col-span-2">
             <CardHeader className="py-3">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base">Live Controls</CardTitle>
@@ -1811,7 +1811,7 @@ function InterviewerView() {
             )}
           </Card>
 
-          <Card>
+          <Card className="xl:col-span-2">
             <CardHeader className="py-3">
               <div className="flex items-center justify-between">
                 <div>
@@ -1860,7 +1860,7 @@ function InterviewerView() {
             )}
           </Card>
 
-          <Card>
+          <Card className="xl:col-span-2">
             <CardHeader className="py-3">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base">Follow-up Thread</CardTitle>
@@ -2005,30 +2005,32 @@ function InterviewerView() {
                     </div>
                   )}
                 </div>
-                {followupThread.length === 0 && (
-                  <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
-                    No follow-ups yet.
-                  </div>
-                )}
-                {followupThread.map((item) => (
-                  <div key={item.id} className="rounded-lg border bg-muted/20 p-3 text-sm">
-                    <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span>Round {item.round_number ?? '-'}</span>
-                      <span>{item.source === 'manual' ? 'Manual' : 'Auto'}</span>
+                <div className="hide-scrollbar max-h-[360px] space-y-3 overflow-y-auto pr-1">
+                  {followupThread.length === 0 && (
+                    <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
+                      No follow-ups yet.
                     </div>
-                    <p className="mt-2 font-semibold">Q: {item.question}</p>
-                    {item.answered ? (
-                      <p className="mt-2 text-muted-foreground">A: {item.answer}</p>
-                    ) : (
-                      <p className="mt-2 text-muted-foreground">Awaiting response.</p>
-                    )}
-                  </div>
-                ))}
+                  )}
+                  {followupThread.map((item) => (
+                    <div key={item.id} className="rounded-lg border bg-muted/20 p-3 text-sm">
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>Round {item.round_number ?? '-'}</span>
+                        <span>{item.source === 'manual' ? 'Manual' : 'Auto'}</span>
+                      </div>
+                      <p className="mt-2 font-semibold">Q: {item.question}</p>
+                      {item.answered ? (
+                        <p className="mt-2 text-muted-foreground">A: {item.answer}</p>
+                      ) : (
+                        <p className="mt-2 text-muted-foreground">Awaiting response.</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </CardContent>
             )}
           </Card>
 
-          <Card>
+          <Card className="xl:col-span-2">
             <CardHeader>
               <CardTitle className="text-base">Hiring Manager Activity Map</CardTitle>
               <CardDescription>Heatmap view of session event intensity.</CardDescription>
@@ -2038,7 +2040,7 @@ function InterviewerView() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="xl:col-span-2">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
                 <FileText className="h-4 w-4 text-primary" />
