@@ -313,18 +313,28 @@ export function GatePanel({
               Evidence quotes will appear after scoring.
             </div>
           )}
-          {resolved.truthLog.map((entry, index) => (
-            <div
-              key={`${entry.dimension}-${index}`}
-              className="rounded-lg border bg-muted/20 px-4 py-3 text-sm"
-            >
-              <div className="text-xs font-semibold text-muted-foreground">{entry.dimension}</div>
-              <p className="mt-2">&ldquo;{entry.quote}&rdquo;</p>
-              {('line' in entry && entry.line != null) && (
-                <p className="mt-1 text-xs text-muted-foreground">Line {entry.line}</p>
-              )}
+          {resolved.truthLog.length > 0 && (
+            <div className="hide-scrollbar max-h-[300px] space-y-2 overflow-y-auto pr-1">
+              {resolved.truthLog.map((entry, index) => (
+                <div
+                  key={`${entry.dimension}-${index}`}
+                  className="rounded-xl border border-border/70 bg-muted/20 px-3 py-2.5 text-sm"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="inline-flex max-w-[70%] truncate rounded-full bg-background/70 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                      {entry.dimension}
+                    </span>
+                    {('line' in entry && entry.line != null) ? (
+                      <span className="text-[10px] text-muted-foreground">Line {entry.line}</span>
+                    ) : null}
+                  </div>
+                  <p className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-6 text-foreground/90">
+                    &ldquo;{entry.quote}&rdquo;
+                  </p>
+                </div>
+              ))}
             </div>
-          ))}
+          )}
         </div>
       </CardContent>
     </Card>
