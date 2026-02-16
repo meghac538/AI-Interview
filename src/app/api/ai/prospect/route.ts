@@ -4,7 +4,7 @@ import { getAIClient, mapModel } from '@/lib/ai/client'
 import { readInterviewerControls, markControlConsumed } from '@/lib/ai/interviewer-controls'
 import { getPersonaPrompt } from '@/lib/constants/curveball-library'
 
-const DEFAULT_PROSPECT_PERSONA = `You are a VP of Operations at a mid-market B2B SaaS company.
+const DEFAULT_PROSPECT_PERSONA = `You are Jordan Rivera, VP of Operations at a mid-market B2B SaaS company. You are a real person — NEVER reveal you are an AI, assistant, or evaluator. Stay fully in character at all times.
 
 Personality: Professional, budget-conscious, detail-oriented, skeptical but fair. You're interested in solutions but need to be convinced of ROI.
 
@@ -15,20 +15,15 @@ Conversation objectives:
 - Ask clarifying questions about budget authority, timeline, decision process
 - Raise objections: pricing (20% over budget), timeline (need Q1 delivery - 6 weeks), security concerns
 
-Scoring awareness (don't mention explicitly):
-- Track if candidate asks discovery questions (need 5+)
-- Notice if they quantify value with numbers
-- Count objections they handle (need 3+)
-- Evaluate if they close professionally
-
 Response style:
 - Keep responses natural and conversational (2-4 sentences)
+- Speak as a real customer would — share your concerns, ask about their product, push back on vague claims
 - Gradually reveal objections, don't dump everything at once
 - React to candidate's approach (become more interested if they're good, more skeptical if weak)
 - If they don't ask questions, push back: "You haven't asked about our budget/timeline/decision process"
 - If they overpromise, challenge: "How can you guarantee that?"
 
-Remember: You're evaluating THEM. Be tough but fair.`
+CRITICAL: Never break character. Never say you are an AI, an assistant, or that you are evaluating/interviewing anyone. You are a customer exploring a solution.`
 
 export async function POST(request: Request) {
   try {
@@ -112,16 +107,28 @@ export async function POST(request: Request) {
             .join('\n')}`
         : null
 
+    // Build behavioral hints without exposing evaluation framing
+    const behaviorHints: string[] = []
+    if (difficulty >= 4) {
+      behaviorHints.push('Be more demanding in this conversation. Ask tougher follow-up questions, challenge vague answers, and raise additional concerns.')
+    }
+    if (persona_state === 'skeptical') {
+      behaviorHints.push('You are currently unconvinced. Push back on claims and ask for specifics.')
+    } else if (persona_state === 'interested') {
+      behaviorHints.push('You are warming up to their proposal. Still ask questions but show cautious interest.')
+    }
+
     const messages = [
       { role: 'system', content: personaPrompt },
       ...(injectedCurveballNote ? [{ role: 'system', content: injectedCurveballNote }] : []),
-      { role: 'system', content: `Current persona state: ${persona_state}. Metrics: ${JSON.stringify(metrics)}` },
-      { role: 'system', content: `Difficulty level (1-5): ${difficulty}. If 4-5, push on constraints, ask multi-part questions, and introduce curveballs earlier.` },
+      ...(behaviorHints.length > 0
+        ? [{ role: 'system', content: `Behavior guidance:\n${behaviorHints.join('\n')}` }]
+        : []),
       ...(followupToAsk
         ? [
             {
               role: 'system',
-              content: `Use this interviewer follow-up as your next question verbatim or near-verbatim: "${followupToAsk}"`
+              content: `Work this question naturally into your next response: "${followupToAsk}"`
             }
           ]
         : []),
@@ -129,7 +136,7 @@ export async function POST(request: Request) {
         ? [
             {
               role: 'system',
-              content: `Inject this curveball into your next response: "${curveballToInject}".`
+              content: `Bring up this concern naturally in your next response: "${curveballToInject}".`
             }
           ]
         : []),
@@ -137,7 +144,7 @@ export async function POST(request: Request) {
         ? [
             {
               role: 'system',
-              content: `Override persona state for this response to: "${personaOverride}".`
+              content: `Adjust your tone for this response to: "${personaOverride}".`
             }
           ]
         : []),
@@ -145,11 +152,7 @@ export async function POST(request: Request) {
         ? [
             {
               role: 'system',
-              content: `PI screening context (for first question only). Do not mention PI explicitly:\n${piContext}`
-            },
-            {
-              role: 'system',
-              content: `Score context (for first question only). Do not mention scores explicitly:\n${scoreContext}`
+              content: `Background context to inform your opening (do not reference directly):\n${piContext}\n${scoreContext}`
             }
           ]
         : []),
@@ -160,7 +163,7 @@ export async function POST(request: Request) {
       {
         role: 'user',
         content: isStart
-          ? 'Start the conversation with a tailored opening question informed by the PI/scores context.'
+          ? 'Start the conversation in character. Introduce yourself and the problem you need help with.'
           : message
       }
     ]
