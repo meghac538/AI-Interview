@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
@@ -12,25 +12,50 @@ export function TextResponseUI({ round }: { round: Round }) {
   const [response, setResponse] = useState('')
   const [outputs, setOutputs] = useState<Record<string, string>>({})
   const [workflow, setWorkflow] = useState<Record<string, { details: string; quality: string }>>({})
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const handleChange = async (value: string) => {
+  // Reset all input state when the round changes
+  useEffect(() => {
+    setResponse('')
+    setOutputs({})
+    setWorkflow({})
+  }, [round.round_number])
+
+  useEffect(() => {
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current)
+    }
+  }, [])
+
+  const handleChange = (value: string) => {
     setResponse(value)
 
-    if (value.length > 0 && session) {
-      await fetch('/api/artifact/submit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: session.id,
-          round_number: round.round_number,
-          artifact_type: 'text_response',
-          content: value,
-          metadata: {
-            draft: true,
-            word_count: value.split(/\s+/).filter(Boolean).length
-          }
-        })
+    // Signal to parent whether we have content
+    window.dispatchEvent(
+      new CustomEvent('round-content-change', {
+        detail: { round_number: round.round_number, hasContent: value.trim().length > 0 }
       })
+    )
+
+    // Debounce auto-save: wait 800ms after last keystroke
+    if (saveTimer.current) clearTimeout(saveTimer.current)
+    if (value.length > 0 && session) {
+      saveTimer.current = setTimeout(() => {
+        fetch('/api/artifact/submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: session.id,
+            round_number: round.round_number,
+            artifact_type: 'text_response',
+            content: value,
+            metadata: {
+              draft: true,
+              word_count: value.split(/\s+/).filter(Boolean).length
+            }
+          })
+        }).catch(() => {})
+      }, 800)
     }
   }
 
@@ -44,24 +69,67 @@ export function TextResponseUI({ round }: { round: Round }) {
     return response
   }, [outputs, workflow, response, round.config?.outputs, round.config?.workflow_stages])
 
-  const saveStructured = async (payload: Record<string, any>) => {
+  const structuredSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (structuredSaveTimer.current) clearTimeout(structuredSaveTimer.current)
+    }
+  }, [])
+
+  const saveStructured = (payload: Record<string, any>) => {
     if (!session) return
-    await fetch('/api/artifact/submit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        session_id: session.id,
-        round_number: round.round_number,
-        artifact_type: 'structured_response',
-        content: JSON.stringify(payload),
-        metadata: {
-          draft: true,
-          schema: payload.schema,
-          word_count: structuredContent.split(/\s+/).filter(Boolean).length
+    if (structuredSaveTimer.current) clearTimeout(structuredSaveTimer.current)
+    structuredSaveTimer.current = setTimeout(() => {
+      fetch('/api/artifact/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: session.id,
+          round_number: round.round_number,
+          artifact_type: 'structured_response',
+          content: JSON.stringify(payload),
+          metadata: {
+            draft: true,
+            schema: payload.schema,
+            word_count: structuredContent.split(/\s+/).filter(Boolean).length
         }
       })
-    })
+    }).catch(() => {})
+    }, 800)
   }
+
+  // Auto-save on timer expiry: submit final (non-draft) artifact
+  const responseRef = useRef(response)
+  responseRef.current = response
+  const structuredRef = useRef(structuredContent)
+  structuredRef.current = structuredContent
+
+  useEffect(() => {
+    const handler = async (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      if (detail?.round_number !== round.round_number || !session?.id) return
+      const content = round.config?.outputs || round.config?.workflow_stages
+        ? structuredRef.current
+        : responseRef.current
+      if (!content || content.length === 0) return
+      await fetch('/api/artifact/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: session.id,
+          round_number: round.round_number,
+          artifact_type: round.config?.outputs || round.config?.workflow_stages
+            ? 'structured_response'
+            : 'text_response',
+          content,
+          metadata: { draft: false, auto_saved: true, word_count: content.split(/\s+/).filter(Boolean).length }
+        })
+      }).catch(() => {})
+    }
+    window.addEventListener('round-auto-save', handler)
+    return () => window.removeEventListener('round-auto-save', handler)
+  }, [round.round_number, round.config?.outputs, round.config?.workflow_stages, session?.id])
 
   if (!session) return null
 

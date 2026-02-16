@@ -1,9 +1,5 @@
-import OpenAI from 'openai'
 import { supabaseAdmin } from '@/lib/supabase/server'
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-})
+import { getAIClient, mapModel } from '@/lib/ai/client'
 
 export async function generateQuestionFromBlueprint(blueprint: any, roleSignals: any) {
   const prompt = `You are generating a live interview question from a blueprint.
@@ -24,8 +20,8 @@ Requirements:
 Return JSON:
 {"prompt":"...","expected_output":"..."}`
 
-  const completion = await openai.chat.completions.create({
-    model: 'gpt-4o',
+  const completion = await getAIClient().chat.completions.create({
+    model: mapModel('gpt-4o'),
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.4,
     response_format: { type: 'json_object' },
@@ -55,8 +51,8 @@ Return JSON:
   "bad": ["...", "..."]
 }`
 
-  const completion = await openai.chat.completions.create({
-    model: 'gpt-4o',
+  const completion = await getAIClient().chat.completions.create({
+    model: mapModel('gpt-4o'),
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.5,
     response_format: { type: 'json_object' },
@@ -93,8 +89,8 @@ Return JSON:
   "reason": "short explanation"
 }`
 
-  const completion = await openai.chat.completions.create({
-    model: 'gpt-4o',
+  const completion = await getAIClient().chat.completions.create({
+    model: mapModel('gpt-4o'),
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.2,
     response_format: { type: 'json_object' },
@@ -109,8 +105,8 @@ export async function runLeakageCheck(promptText: string) {
 Prompt: ${promptText}
 Return JSON: {"is_trivia": true/false, "reason": "short"}`
 
-  const completion = await openai.chat.completions.create({
-    model: 'gpt-4o',
+  const completion = await getAIClient().chat.completions.create({
+    model: mapModel('gpt-4o'),
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.1,
     response_format: { type: 'json_object' },
@@ -125,8 +121,8 @@ export async function runBiasCheck(promptText: string) {
 Prompt: ${promptText}
 Return JSON: {"has_bias_risk": true/false, "reason": "short"}`
 
-  const completion = await openai.chat.completions.create({
-    model: 'gpt-4o',
+  const completion = await getAIClient().chat.completions.create({
+    model: mapModel('gpt-4o'),
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.1,
     response_format: { type: 'json_object' },
@@ -152,8 +148,8 @@ Return JSON:
   "reason": "short"
 }`
 
-  const completion = await openai.chat.completions.create({
-    model: 'gpt-4o',
+  const completion = await getAIClient().chat.completions.create({
+    model: mapModel('gpt-4o'),
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.1,
     response_format: { type: 'json_object' },
@@ -192,8 +188,8 @@ Return JSON:
   "reason": "short"
 }`
 
-  const completion = await openai.chat.completions.create({
-    model: 'gpt-4o',
+  const completion = await getAIClient().chat.completions.create({
+    model: mapModel('gpt-4o'),
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.2,
     response_format: { type: 'json_object' },

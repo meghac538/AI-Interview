@@ -172,10 +172,22 @@ export async function fetchFollowupEvents(sessionId: string, limit = 200) {
       },
     }))
 
+  // Deduplicate combined list by question_id (manual followups may already
+  // exist as followup_question events, causing double-counting)
+  const seen = new Set<string>()
+  const combined: any[] = []
+  for (const event of [...(questions || []), ...manualQuestions]) {
+    const id = event.payload?.question_id
+    if (id && !seen.has(id)) {
+      seen.add(id)
+      combined.push(event)
+    }
+  }
+
   return {
     questions: questions || [],
     answers: answers || [],
     manualQuestions,
-    combined: [...(questions || []), ...manualQuestions],
+    combined,
   }
 }

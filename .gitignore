@@ -51,3 +51,5 @@ supabase/.temp/
 Thumbs.db
 
 .CLAUDE.md
+
+.pnpm-store

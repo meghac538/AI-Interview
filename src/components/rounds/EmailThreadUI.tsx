@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Send } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -54,6 +54,13 @@ VP of Operations`,
 
     setEmailThread((prev) => [...prev, newEmail])
 
+    // Signal content to parent
+    window.dispatchEvent(
+      new CustomEvent('round-content-change', {
+        detail: { round_number: round.round_number, hasContent: true }
+      })
+    )
+
     await fetch('/api/artifact/submit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -93,6 +100,40 @@ Sarah`,
       }, 3000)
     }
   }
+
+  // Auto-save on timer expiry: save unsent draft
+  const draftBodyRef = useRef(draftBody)
+  draftBodyRef.current = draftBody
+  const draftSubjectRef = useRef(draftSubject)
+  draftSubjectRef.current = draftSubject
+  const threadLengthRef = useRef(emailThread.length)
+  threadLengthRef.current = emailThread.length
+
+  useEffect(() => {
+    const handler = async (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      if (detail?.round_number !== round.round_number || !session?.id) return
+      if (!draftBodyRef.current.trim()) return
+      await fetch('/api/artifact/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: session.id,
+          round_number: round.round_number,
+          artifact_type: 'email_draft',
+          content: draftBodyRef.current,
+          metadata: {
+            draft: false,
+            auto_saved: true,
+            subject: draftSubjectRef.current,
+            thread_position: threadLengthRef.current
+          }
+        })
+      }).catch(() => {})
+    }
+    window.addEventListener('round-auto-save', handler)
+    return () => window.removeEventListener('round-auto-save', handler)
+  }, [round.round_number, session?.id])
 
   if (!session) return null
 

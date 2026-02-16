@@ -7,7 +7,6 @@ import {
   ChevronRight,
   Check,
   Loader2,
-  Mic,
   Send,
   Sparkles,
   Wrench,
@@ -21,6 +20,7 @@ import {
   MessageContent,
   MessageResponse
 } from "@/components/ai-elements/message"
+import { SpeechInput } from "@/components/ai-elements/speech-input"
 import {
   ModelSelector,
   ModelSelectorContent,
@@ -86,9 +86,7 @@ export function SidekickPanel({ role }: { role: string }) {
   const [isOpen, setIsOpen] = useState(false)
   const [isModelPickerOpen, setIsModelPickerOpen] = useState(false)
   const [pulseTab, setPulseTab] = useState(false)
-  const [isListening, setIsListening] = useState(false)
   const scrollAnchorRef = useRef<HTMLDivElement | null>(null)
-  const recognitionRef = useRef<any>(null)
 
   useEffect(() => {
     const handlePrefill = (event: Event) => {
@@ -135,64 +133,6 @@ export function SidekickPanel({ role }: { role: string }) {
 
     scrollAnchorRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
   }, [messages, loading, isOpen])
-
-  // Cleanup speech recognition on unmount
-  useEffect(() => {
-    return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop()
-        recognitionRef.current = null
-      }
-      if (typeof window !== 'undefined') {
-        window.speechSynthesis?.cancel()
-      }
-    }
-  }, [])
-
-  const toggleListening = () => {
-    if (typeof window === 'undefined') return
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    if (!SpeechRecognition) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: 'Voice input is not supported in this browser.',
-          createdAt: new Date().toISOString(),
-          model: 'system'
-        }
-      ])
-      return
-    }
-
-    if (isListening && recognitionRef.current) {
-      recognitionRef.current.stop()
-      return
-    }
-
-    const recognition = new SpeechRecognition()
-    recognition.lang = 'en-US'
-    recognition.interimResults = false
-    recognition.maxAlternatives = 1
-
-    recognition.onresult = (event: any) => {
-      const transcript = event.results?.[0]?.[0]?.transcript || ''
-      setDraft((prev) => (prev ? `${prev} ${transcript}` : transcript))
-    }
-
-    recognition.onerror = () => {
-      setIsListening(false)
-    }
-
-    recognition.onend = () => {
-      setIsListening(false)
-    }
-
-    recognitionRef.current = recognition
-    setIsListening(true)
-    recognition.start()
-  }
 
   const sendMessage = async () => {
     if (!draft.trim() || loading || !session) return
@@ -470,15 +410,30 @@ export function SidekickPanel({ role }: { role: string }) {
                           {queriesRemaining === null ? "Policy and query caps may apply." : `Queries remaining: ${queriesRemaining}`}
                         </p>
                         <div className="flex items-center gap-2">
-                          <Button
-                            variant={isListening ? "secondary" : "outline"}
+                          <SpeechInput
+                            variant="outline"
                             size="icon"
-                            onClick={toggleListening}
+                            className="h-9 w-9 shrink-0 rounded-md"
                             disabled={loading}
-                            aria-label={isListening ? "Stop voice input" : "Start voice input"}
-                          >
-                            <Mic className={`h-4 w-4 ${isListening ? "animate-pulse" : ""}`} />
-                          </Button>
+                            aria-label="Voice input"
+                            onTranscriptionChange={(text) =>
+                              setDraft((prev) => (prev ? `${prev} ${text}` : text))
+                            }
+                            onAudioRecorded={async (blob) => {
+                              const fd = new FormData()
+                              fd.append("file", blob, "audio.webm")
+                              const res = await fetch("/api/transcribe", {
+                                method: "POST",
+                                body: fd
+                              })
+                              if (!res.ok) {
+                                const err = await res.json().catch(() => ({}))
+                                throw new Error(err.error || "Transcription failed")
+                              }
+                              const { text } = await res.json()
+                              return text ?? ""
+                            }}
+                          />
                           <Button onClick={sendMessage} disabled={loading || !draft.trim()}>
                             <Send className="h-4 w-4" />
                             Send

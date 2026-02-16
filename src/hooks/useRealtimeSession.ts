@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase/client'
 import type { Artifact, InterviewSession, Round, Score, Event, InterviewScopePackage } from '@/lib/types/database'
 
@@ -11,25 +11,34 @@ export function useRealtimeSession(sessionId: string) {
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
   const [assessments, setAssessments] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const refreshInFlight = useRef(false)
 
   const refresh = useCallback(async () => {
     if (!sessionId) return
-    const response = await fetch(`/api/session/${sessionId}`, { cache: 'no-store' })
-    if (response.ok) {
-      const data = await response.json()
+    // Skip if a refresh is already in progress to prevent pile-up
+    if (refreshInFlight.current) return
+    refreshInFlight.current = true
+    try {
+      const response = await fetch(`/api/session/${sessionId}`, { cache: 'no-store' })
+      if (response.ok) {
+        const data = await response.json()
 
-      setSession(data.session)
-      setScopePackage(data.scopePackage)
-      setRounds(data.scopePackage?.round_plan || [])
-      setScores(data.scores || [])
-      setEvents(data.events || [])
-      setArtifacts(data.artifacts || [])
-      setAssessments(data.assessments || [])
+        setSession(data.session)
+        setScopePackage(data.scopePackage)
+        setRounds(data.scopePackage?.round_plan || [])
+        setScores(data.scores || [])
+        setEvents(data.events || [])
+        setArtifacts(data.artifacts || [])
+        setAssessments(data.assessments || [])
+      }
+      setLoading(false)
+    } finally {
+      refreshInFlight.current = false
     }
-    setLoading(false)
   }, [sessionId])
 
-  // Initial fetch + polling fallback (keeps UI live even if realtime is unavailable)
+  // Initial fetch + slow polling fallback (real-time handles live updates;
+  // polling is only a safety net in case the WebSocket drops)
   useEffect(() => {
     if (!sessionId) return
     let cancelled = false
@@ -43,7 +52,7 @@ export function useRealtimeSession(sessionId: string) {
 
     const interval = setInterval(() => {
       void tick()
-    }, 2500)
+    }, 30000)
 
     return () => {
       cancelled = true
@@ -113,7 +122,7 @@ export function useRealtimeSession(sessionId: string) {
                 updated[index] = nextScore
                 return updated
               }
-              return [...prev, nextScore]
+              return [nextScore, ...prev]
             })
           }
         }
@@ -132,7 +141,11 @@ export function useRealtimeSession(sessionId: string) {
         },
         (payload) => {
           if (payload.new) {
-            setEvents((prev) => [payload.new as Event, ...prev])
+            const incoming = payload.new as Event
+            setEvents((prev) => {
+              if (prev.some((e) => e.id === incoming.id)) return prev
+              return [incoming, ...prev]
+            })
           }
         }
       )

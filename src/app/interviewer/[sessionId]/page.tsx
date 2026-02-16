@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { AlertTriangle, CheckCircle2, Slash } from 'lucide-react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import {
   ArrowLeft,
   BadgeCheck,
@@ -14,8 +14,7 @@ import {
   Link2,
   Loader2,
   ShieldAlert,
-  Sparkles,
-  Wand2
+  Sparkles
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -32,6 +31,7 @@ import { Progress } from '@/components/ui/progress'
 import type { RedFlagEntry } from '@/components/GatePanel'
 import { RED_FLAG_TYPES } from '@/lib/constants/red-flags'
 import type { RedFlagTypeKey } from '@/lib/constants/red-flags'
+import { getCurveballsForTrack, getPersonasForTrack, getCurveballByKey, getPersonaDisplayName } from '@/lib/constants/curveball-library'
 import { VoiceControlPanel } from '@/components/VoiceControlPanel'
 import { AIAssessmentsPanel } from '@/components/AIAssessmentsPanel'
 import { useVoiceAnalysis } from '@/hooks/useVoiceAnalysis'
@@ -153,11 +153,13 @@ function analyzeTranscript(transcript: TranscriptEntry[]) {
 }
 
 function buildGateData(scores: any[], events?: any[]) {
+  // Collect follow-ups from followup_question events (canonical source for both auto + manual)
   const eventFollowups = (events || [])
     .filter((event) => event.event_type === 'followup_question')
     .map((event) => String(event.payload?.question || '').trim())
     .filter(Boolean)
 
+  // Legacy: also collect from interviewer_action events (for old data before migration)
   const manualFollowups = (events || [])
     .filter(
       (event) =>
@@ -165,7 +167,7 @@ function buildGateData(scores: any[], events?: any[]) {
         event.payload?.action_type === 'manual_followup'
     )
     .map((event) => String(event.payload?.followup || '').trim())
-    .filter(Boolean)
+    .filter((text) => text && !eventFollowups.includes(text))
 
   const eventRedFlags: RedFlagEntry[] = (events || [])
     .filter((e) => e.event_type === 'red_flag_detected')
@@ -389,7 +391,9 @@ function buildActionLog(events: any[]) {
     'difficulty_adaptation',
     'red_flag_detected',
     'auto_stop_triggered',
-    'session_force_stopped'
+    'session_force_stopped',
+    'curveball_used',
+    'persona_used'
   ])
 
   for (const event of events || []) {
@@ -428,6 +432,12 @@ function buildActionLog(events: any[]) {
       if (event.event_type === 'session_force_stopped') {
         return event.payload?.reason || 'Session force stopped'
       }
+      if (event.event_type === 'curveball_used') {
+        return `AI consumed curveball: ${event.payload?.curveball || 'unknown'}`
+      }
+      if (event.event_type === 'persona_used') {
+        return `AI applied persona: ${event.payload?.persona || 'unknown'}`
+      }
       if (event.event_type === 'round_started' || event.event_type === 'round_completed') {
         return undefined
       }
@@ -456,7 +466,11 @@ function buildActionLog(events: any[]) {
                   ? 'Auto-stop triggered'
                   : event.event_type === 'session_force_stopped'
                     ? 'Session force stopped'
-                    : event.event_type.replace(/_/g, ' ')
+                    : event.event_type === 'curveball_used'
+                      ? 'Curveball consumed'
+                      : event.event_type === 'persona_used'
+                        ? 'Persona applied'
+                        : event.event_type.replace(/_/g, ' ')
 
     actions.push({
       action: label,
@@ -483,6 +497,7 @@ function resolveResumeUrl(artifacts: any[]) {
 }
 
 function InterviewerView() {
+  const router = useRouter()
   const { session, scopePackage, scores, events, rounds, artifacts, refresh } = useSession()
   const [notes, setNotes] = useState('')
   const [magicLink, setMagicLink] = useState<string | null>(null)
@@ -493,6 +508,7 @@ function InterviewerView() {
   const [widgetConfigState, setWidgetConfigState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [widgetConfigError, setWidgetConfigError] = useState<string | null>(null)
   const [actionNotice, setActionNotice] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
+  const [noteSavedToast, setNoteSavedToast] = useState(false)
   const [resumePreview, setResumePreview] = useState<{
     signedUrl: string
     filename: string | null
@@ -517,9 +533,20 @@ function InterviewerView() {
   >([])
   const [showNotes, setShowNotes] = useState(false)
   const [showFollowups, setShowFollowups] = useState(false)
-  const [showControls, setShowControls] = useState(false)
-  const [curveball, setCurveball] = useState('budget_cut')
-  const [persona, setPersona] = useState('skeptical')
+  const [showControls, setShowControls] = useState(true)
+  const [sendingAction, setSendingAction] = useState<string | null>(null)
+  const [curveball, setCurveball] = useState('')
+  const [customCurveball, setCustomCurveball] = useState('')
+  const [aiCurveballSuggestions, setAiCurveballSuggestions] = useState<Array<{
+    id: string; title: string; detail: string; rationale: string;
+    priority: string; source_evidence: string
+  }>>([])
+  const [curveballSuggestionsLoading, setCurveballSuggestionsLoading] = useState(false)
+  const [curveballSuggestionsContext, setCurveballSuggestionsContext] = useState('')
+  const [scorecardOpening, setScorecardOpening] = useState(false)
+  const [sessionStatusLoading, setSessionStatusLoading] = useState<string | null>(null)
+  const [persona, setPersona] = useState('')
+  const [customPersona, setCustomPersona] = useState('')
   const [escalationLevel, setEscalationLevel] = useState('L3')
   const [flagType, setFlagType] = useState<string>('custom')
   const [flagDescription, setFlagDescription] = useState('')
@@ -541,6 +568,38 @@ function InterviewerView() {
     }
     return buildGateData(scores as any[], events as any[])
   }, [session?.status, isVoiceRealtimeActive, transcript, scores, events])
+
+  // Extract expected dimensions from current round's scoring rubric
+  const currentRoundRubric = useMemo(() => {
+    // Try active round first, then fall back to most recent completed round, then last round
+    const activeRound = rounds?.find((r: any) => r.status === 'active')
+    const completedRounds = rounds?.filter((r: any) => r.status === 'completed') || []
+    const mostRecentCompleted = completedRounds.length > 0
+      ? completedRounds.reduce((latest: any, current: any) =>
+          current.round_number > latest.round_number ? current : latest
+        )
+      : null
+    const targetRound = activeRound || mostRecentCompleted || rounds?.[rounds.length - 1]
+
+    if (!targetRound) {
+      return { expectedDimensions: [], roundNumber: undefined }
+    }
+
+    const rubricDimensions = targetRound.config?.scoring_rubric?.dimensions
+    if (!Array.isArray(rubricDimensions)) {
+      return { expectedDimensions: [], roundNumber: targetRound.round_number }
+    }
+
+    return {
+      expectedDimensions: rubricDimensions.map((d: any) => ({
+        name: d.name || '',
+        description: d.description || '',
+        maxScore: d.maxScore || 20
+      })),
+      roundNumber: targetRound.round_number
+    }
+  }, [rounds])
+
   const actionLog = useMemo(() => buildActionLog(events as any[]), [events])
   const resumeUrl = useMemo(() => resolveResumeUrl(artifacts as any[]), [artifacts])
   const activityData = useMemo(() => {
@@ -579,6 +638,7 @@ function InterviewerView() {
       const endsAt = startedAt ? new Date(startedAt.getTime() + durationMs) : null
       return {
         round_number: round.round_number,
+        round_type: round.round_type,
         title: round.title,
         status: round.status || 'pending',
         startedAt,
@@ -588,6 +648,7 @@ function InterviewerView() {
     })
   }, [rounds])
   const followupThread = useMemo(() => {
+    // Single canonical source: followup_question events (covers both auto + manual)
     const questions = (events || [])
       .filter((event: any) => event.event_type === 'followup_question')
       .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
@@ -596,43 +657,20 @@ function InterviewerView() {
       .filter((event: any) => event.event_type === 'followup_answer')
       .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
 
-    const answerMap = new Map<string, string>()
+    // Map answers by question_id AND by question text (fallback for UUID mismatches
+    // when candidate picks a different UUID than what interviewer dedup selected)
+    const answerByIdMap = new Map<string, string>()
+    const answerByTextMap = new Map<string, string>()
     for (const answer of answers) {
+      const ans = answer.payload?.answer || ''
       if (answer.payload?.question_id) {
-        answerMap.set(answer.payload.question_id, answer.payload?.answer || '')
+        answerByIdMap.set(answer.payload.question_id, ans)
+      }
+      const qText = String(answer.payload?.question || '').toLowerCase().trim()
+      if (qText) {
+        answerByTextMap.set(qText, ans)
       }
     }
-
-    const manualQuestions = (events || [])
-      .filter(
-        (event: any) =>
-          event.event_type === 'interviewer_action' &&
-          event.payload?.action_type === 'manual_followup' &&
-          event.payload?.followup
-      )
-      .map((event: any) => ({
-        id: event.payload?.question_id || `manual-${event.id}`,
-        question: event.payload?.followup || '',
-        round_number: event.payload?.round_number ?? event.payload?.target_round,
-        source: 'manual',
-        created_at: event.created_at
-      }))
-
-    const localQuestions = localFollowups.map((item) => ({
-      id: item.id,
-      question: item.question,
-      round_number: item.round_number,
-      source: 'manual',
-      created_at: item.created_at
-    }))
-
-    const serverQuestions = serverFollowups.map((item) => ({
-      id: item.id,
-      question: item.question,
-      round_number: item.round_number,
-      source: item.source || 'manual',
-      created_at: new Date().toISOString()
-    }))
 
     const questionItems = [
       ...questions.map((question: any) => ({
@@ -642,29 +680,73 @@ function InterviewerView() {
         source: question.payload?.source || 'auto',
         created_at: question.created_at
       })),
-      ...manualQuestions,
-      ...localQuestions,
-      ...serverQuestions
+      ...localFollowups.map((item) => ({
+        id: item.id,
+        question: item.question,
+        round_number: item.round_number,
+        source: 'manual',
+        created_at: item.created_at
+      })),
+      ...serverFollowups.map((item) => ({
+        id: item.id,
+        question: item.question,
+        round_number: item.round_number,
+        source: item.source || 'manual',
+        created_at: new Date().toISOString()
+      }))
     ]
       .filter((item) => item.question)
       .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
 
-    const deduped = new Map<string, any>()
+    // Deduplicate by ID first, then by question text as fallback
+    const seenIds = new Set<string>()
+    const seenTexts = new Set<string>()
+    const deduped: typeof questionItems = []
+
     for (const item of questionItems) {
-      const key = item.id || `${item.question}-${item.created_at}`
-      if (!deduped.has(key)) {
-        deduped.set(key, item)
+      if (item.id && seenIds.has(item.id)) continue
+      const textKey = item.question.toLowerCase().trim()
+      if (seenTexts.has(textKey)) continue
+      if (item.id) seenIds.add(item.id)
+      seenTexts.add(textKey)
+      deduped.push(item)
+    }
+
+    // Third fallback: server-side answered status from /api/followup/thread
+    const serverAnswerByIdMap = new Map<string, string>()
+    const serverAnswerByTextMap = new Map<string, string>()
+    for (const item of serverFollowups) {
+      if (item.answered) {
+        const ans = item.answer || ''
+        if (item.id) serverAnswerByIdMap.set(item.id, ans)
+        const sText = item.question.toLowerCase().trim()
+        if (sText) serverAnswerByTextMap.set(sText, ans)
       }
     }
 
-    return Array.from(deduped.values()).map((question: any) => ({
-      id: question.id,
-      question: question.question,
-      round_number: question.round_number,
-      source: question.source,
-      answered: question.id ? answerMap.has(question.id) : false,
-      answer: question.id ? answerMap.get(question.id) : undefined
-    }))
+    return deduped.map((question) => {
+      const textKey = question.question.toLowerCase().trim()
+      const answeredById = question.id ? answerByIdMap.has(question.id) : false
+      const answeredByText = answerByTextMap.has(textKey)
+      const answeredByServer = question.id
+        ? serverAnswerByIdMap.has(question.id) || serverAnswerByTextMap.has(textKey)
+        : serverAnswerByTextMap.has(textKey)
+      const isAnswered = answeredById || answeredByText || answeredByServer
+      return {
+        id: question.id,
+        question: question.question,
+        round_number: question.round_number,
+        source: question.source,
+        answered: isAnswered,
+        answer: answeredById
+          ? answerByIdMap.get(question.id!)
+          : answeredByText
+            ? answerByTextMap.get(textKey)
+            : answeredByServer
+              ? (serverAnswerByIdMap.get(question.id!) || serverAnswerByTextMap.get(textKey))
+              : undefined
+      }
+    })
   }, [events, localFollowups, serverFollowups])
 
   useEffect(() => {
@@ -688,7 +770,26 @@ function InterviewerView() {
       }
     }
     loadThread()
+    // Poll server thread every 30s as a safety net — real-time events handle live updates
+    const interval = setInterval(loadThread, 30000)
+    return () => clearInterval(interval)
   }, [session?.id])
+  // Prune localFollowups once the same question text appears in real-time events
+  useEffect(() => {
+    if (!events || events.length === 0 || localFollowups.length === 0) return
+    const eventQuestions = new Set(
+      (events as any[])
+        .filter((e) => e.event_type === 'followup_question')
+        .map((e) => String(e.payload?.question || '').toLowerCase().trim())
+        .filter(Boolean)
+    )
+    if (eventQuestions.size === 0) return
+    setLocalFollowups((prev) => {
+      const pruned = prev.filter((item) => !eventQuestions.has(item.question.toLowerCase().trim()))
+      return pruned.length === prev.length ? prev : pruned
+    })
+  }, [events, localFollowups.length])
+
   const mergedGateFollowups = useMemo(() => {
     const local = localFollowups.map((item) => item.question).filter(Boolean)
     return Array.from(new Set([...(gateData.followups || []), ...local]))
@@ -789,77 +890,117 @@ function InterviewerView() {
   const isCallInProgress = !!voiceActiveRound && isVoiceRealtimeActive
 
   const sendAction = async (action_type: string, payload?: Record<string, any>) => {
-    const response = await fetch('/api/interviewer/action', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        session_id: session.id,
-        action_type,
-        payload
-      })
-    })
-
-    let data: any = null
+    setSendingAction(action_type)
+    // Show immediate optimistic feedback
+    setActionNotice({ kind: 'success', message: `Sending: ${action_type.replace(/_/g, ' ')}...` })
     try {
-      data = await response.json()
-    } catch {
-      data = null
-    }
+      const response = await fetch('/api/interviewer/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: session.id,
+          action_type,
+          payload
+        })
+      })
 
-    if (!response.ok) {
-      setActionNotice({ kind: 'error', message: data?.error || `Action failed: ${action_type}` })
-      return { ok: false, data }
-    }
+      let data: any = null
+      try {
+        data = await response.json()
+      } catch {
+        data = null
+      }
 
-    setActionNotice({ kind: 'success', message: `Action applied: ${action_type.replace(/_/g, ' ')}` })
-    await refresh()
-    return { ok: true, data }
+      if (!response.ok) {
+        setActionNotice({ kind: 'error', message: data?.error || `Action failed: ${action_type}` })
+        return { ok: false, data }
+      }
+
+      setActionNotice({ kind: 'success', message: `Action applied: ${action_type.replace(/_/g, ' ')}` })
+      // Non-blocking refresh — real-time subscriptions handle live updates
+      refresh().catch(() => {})
+      return { ok: true, data }
+    } finally {
+      setSendingAction(null)
+    }
   }
 
   const sendDecision = async (decision: 'proceed' | 'caution' | 'stop') => {
-    await sendAction('gate_decision', { decision })
+    setSendingAction(`gate_${decision}`)
+    setActionNotice({ kind: 'success', message: `Applying decision: ${decision}...` })
 
-    if (decision === 'caution') {
-      await refresh()
-      return
-    }
-
-    if (decision === 'stop') {
-      await fetch(`/api/session/${session.id}/status`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'aborted', reason: 'interviewer_stop' })
-      })
-      await refresh()
-      return
-    }
-
-    const activeRound = (rounds || []).find((round) => round.status === 'active')
-    const nextRound = (rounds || []).find((round) => round.status === 'pending')
-
-    if (activeRound) {
-      await fetch('/api/round/complete', {
+    try {
+      // Fire gate_decision event (non-blocking — don't wait for full round-trip)
+      const actionPromise = fetch('/api/interviewer/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           session_id: session.id,
-          round_number: activeRound.round_number
+          action_type: 'gate_decision',
+          payload: { decision }
         })
-      })
-    }
+      }).catch(() => {})
 
-    if (nextRound) {
-      await fetch('/api/round/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: session.id,
-          round_number: nextRound.round_number
-        })
-      })
-    }
+      if (decision === 'caution') {
+        await actionPromise
+        setActionNotice({ kind: 'success', message: 'Caution noted.' })
+        refresh().catch(() => {})
+        return
+      }
 
-    await refresh()
+      if (decision === 'stop') {
+        // Fire both in parallel
+        await Promise.all([
+          actionPromise,
+          fetch(`/api/session/${session.id}/status`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'aborted', reason: 'interviewer_stop' })
+          }).catch(() => {})
+        ])
+        setActionNotice({ kind: 'success', message: 'Session stopped.' })
+        refresh().catch(() => {})
+        return
+      }
+
+      // Proceed: complete active round and start next
+      const activeRound = (rounds || []).find((round) => round.status === 'active')
+      const nextRound = (rounds || []).find((round) => round.status === 'pending')
+
+      // Don't block UI — fire round transitions and let real-time handle updates
+      void (async () => {
+        try {
+          await actionPromise
+          if (activeRound) {
+            await fetch('/api/round/complete', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                session_id: session.id,
+                round_number: activeRound.round_number
+              })
+            })
+          }
+          if (nextRound) {
+            await fetch('/api/round/start', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                session_id: session.id,
+                round_number: nextRound.round_number
+              })
+            })
+          }
+          refresh().catch(() => {})
+        } catch {
+          // Errors handled by real-time fallback
+        }
+      })()
+
+      setActionNotice({ kind: 'success', message: 'Proceeding to next round.' })
+    } finally {
+      setSendingAction(null)
+    }
   }
 
   const sendCandidateLink = async () => {
@@ -880,7 +1021,7 @@ function InterviewerView() {
 
       setMagicLink(data.action_link)
       setSendLinkState('sent')
-      await refresh()
+      refresh().catch(() => {})
     } catch (error: any) {
       setSendLinkState('error')
       setSendLinkError(error?.message || 'Failed to send candidate link.')
@@ -897,29 +1038,111 @@ function InterviewerView() {
   const endRound = async () => {
     const activeRound = (rounds || []).find((round) => round.status === 'active')
     if (!activeRound) return
-    await sendAction('end_round', { round_number: activeRound.round_number })
-    await fetch('/api/round/complete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        session_id: session.id,
-        round_number: activeRound.round_number
-      })
+    setSendingAction('end_round')
+    setActionNotice({ kind: 'success', message: 'Ending round...' })
+    // Fire both requests in parallel, don't block UI
+    Promise.all([
+      fetch('/api/interviewer/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: session.id,
+          action_type: 'end_round',
+          payload: { round_number: activeRound.round_number }
+        })
+      }).catch(() => {}),
+      fetch('/api/round/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: session.id,
+          round_number: activeRound.round_number
+        })
+      }).catch(() => {})
+    ]).then(() => {
+      setActionNotice({ kind: 'success', message: 'Round ended.' })
+      refresh().catch(() => {})
+    }).finally(() => {
+      setSendingAction(null)
     })
   }
 
-  const injectCurveball = async (curveball: string) => {
+  const injectCurveball = async (curveballKey: string) => {
     await sendAction('inject_curveball', {
-      curveball,
-      target_round: null
+      curveball: curveballKey,
+      curveball_key: curveballKey,
+      target_round: null,
     })
   }
 
-  const switchPersona = async (persona: string) => {
-    await sendAction('switch_persona', {
-      persona,
-      target_round: null
+  const injectCustomCurveball = async (text: string) => {
+    if (!text.trim()) return
+    await sendAction('inject_curveball', {
+      curveball_key: 'custom',
+      custom_text: text.trim(),
+      target_round: null,
     })
+    setCustomCurveball('')
+  }
+
+  const fetchCurveballSuggestions = async () => {
+    if (!session) return
+    const activeRound = (rounds || []).find((r) => r.status === 'active')
+    if (!activeRound || activeRound.round_type !== 'text') return
+    setCurveballSuggestionsLoading(true)
+    setCurveballSuggestionsContext('')
+    try {
+      const res = await fetch('/api/ai/curveball-suggest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: session.id,
+          round_number: activeRound.round_number
+        })
+      })
+      const data = await res.json()
+      setAiCurveballSuggestions(data.suggestions || [])
+      setCurveballSuggestionsContext(data.context_summary || data.error || '')
+    } catch {
+      setAiCurveballSuggestions([])
+      setCurveballSuggestionsContext('Network error — could not reach server.')
+    } finally {
+      setCurveballSuggestionsLoading(false)
+    }
+  }
+
+  const approveAiCurveball = async (suggestion: typeof aiCurveballSuggestions[0]) => {
+    await sendAction('inject_curveball', {
+      curveball_key: `ai_suggested_${Date.now()}`,
+      custom_text: suggestion.detail,
+      target_round: null,
+    })
+    // Clear all suggestions after injecting one
+    setAiCurveballSuggestions([])
+    setCurveballSuggestionsContext('')
+  }
+
+  const dismissAiCurveball = (suggestionId: string) => {
+    setAiCurveballSuggestions((prev) => prev.filter((s) => s.id !== suggestionId))
+  }
+
+  const switchPersona = async (personaKey: string) => {
+    await sendAction('switch_persona', {
+      persona: personaKey,
+      target_round: null,
+      track: roleTrack,
+    })
+  }
+
+  const switchCustomPersona = async (text: string) => {
+    if (!text.trim()) return
+    await sendAction('switch_persona', {
+      persona: 'custom',
+      custom_text: text.trim(),
+      target_round: null,
+      track: roleTrack,
+    })
+    setCustomPersona('')
   }
 
   const copyMagicLink = async () => {
@@ -963,20 +1186,25 @@ function InterviewerView() {
     session.status === 'live' ? 'default' : session.status === 'completed' ? 'secondary' : 'outline'
 
   const setSessionStatus = async (status: 'completed' | 'aborted', reason?: string) => {
-    const response = await fetch(`/api/session/${session.id}/status`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status, reason: reason || null })
-    })
+    setSessionStatusLoading(status)
+    try {
+      const response = await fetch(`/api/session/${session.id}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, reason: reason || null })
+      })
 
-    const data = await response.json().catch(() => ({}))
-    if (!response.ok) {
-      setActionNotice({ kind: 'error', message: data?.error || 'Failed to update session status.' })
-      return
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        setActionNotice({ kind: 'error', message: data?.error || 'Failed to update session status.' })
+        return
+      }
+
+      setActionNotice({ kind: 'success', message: `Session marked ${status}.` })
+      refresh().catch(() => {})
+    } finally {
+      setSessionStatusLoading(null)
     }
-
-    setActionNotice({ kind: 'success', message: `Session marked ${status}.` })
-    await refresh()
   }
 
   const resolvedResumeUrl = resumePreview?.signedUrl || resumeUrl
@@ -1009,11 +1237,27 @@ function InterviewerView() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="outline" onClick={() => void setSessionStatus('completed', 'interviewer_complete')}>
-              Mark Completed
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={scorecardOpening}
+              onClick={() => {
+                setScorecardOpening(true)
+                router.push(`/scorecard/${session.id}`)
+              }}
+            >
+              {scorecardOpening
+                ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                : <FileText className="mr-2 h-4 w-4" />}
+              {scorecardOpening ? 'Loading...' : 'Score Card'}
             </Button>
-            <Button size="sm" variant="destructive" onClick={() => void setSessionStatus('aborted', 'interviewer_abort')}>
-              Abort Session
+            <Button size="sm" variant="outline" disabled={sessionStatusLoading !== null} onClick={() => void setSessionStatus('completed', 'interviewer_complete')}>
+              {sessionStatusLoading === 'completed' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {sessionStatusLoading === 'completed' ? 'Completing...' : 'Mark Completed'}
+            </Button>
+            <Button size="sm" variant="destructive" disabled={sessionStatusLoading !== null} onClick={() => void setSessionStatus('aborted', 'interviewer_abort')}>
+              {sessionStatusLoading === 'aborted' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {sessionStatusLoading === 'aborted' ? 'Aborting...' : 'Abort Session'}
             </Button>
             <ThemeToggle />
           </div>
@@ -1060,18 +1304,6 @@ function InterviewerView() {
                     <Link2 className="h-4 w-4" />
                   )}
                   Send Candidate Link
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => sendAction('inject_curveball')}>
-                  <Sparkles className="h-4 w-4" />
-                  Inject Curveball
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => sendAction('switch_persona')}>
-                  <Wand2 className="h-4 w-4" />
-                  Switch Persona
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => sendAction('end_round')}>
-                  <Clock3 className="h-4 w-4" />
-                  End Round
                 </Button>
               </div>
 
@@ -1267,6 +1499,7 @@ function InterviewerView() {
               <VoiceControlPanel
                 sessionId={session.id}
                 isCallActive={isCallInProgress}
+                track={roleTrack}
               />
               <AIAssessmentsPanel sessionId={session.id} />
 
@@ -1386,6 +1619,9 @@ function InterviewerView() {
             redFlags={gateData.redFlags}
             truthLog={gateData.truthLog}
             followups={mergedGateFollowups}
+            loading={!!sendingAction}
+            expectedDimensions={currentRoundRubric.expectedDimensions}
+            currentRoundNumber={currentRoundRubric.roundNumber}
             onDecision={sendDecision}
             onAction={(action) => {
               if (action === 'escalate') {
@@ -1393,6 +1629,13 @@ function InterviewerView() {
               }
             }}
             onAddFollowup={async (followup) => {
+              const lower = followup.toLowerCase().trim()
+              const alreadySent = followupThread.some(
+                (q) => q.question.toLowerCase().trim() === lower
+              ) || localFollowups.some(
+                (q) => q.question.toLowerCase().trim() === lower
+              )
+              if (alreadySent) return
               await sendAction('manual_followup', { followup })
             }}
           />
@@ -1408,8 +1651,10 @@ function InterviewerView() {
             </CardHeader>
             {showControls && (
               <CardContent className="space-y-4">
+                {/* Curveball + Persona + Difficulty */}
                 <div className="grid gap-4 rounded-lg border p-4">
-                  <div className="grid gap-3 md:grid-cols-2">
+                  <div className="grid gap-4">
+                    {/* Track-aware curveball dropdown */}
                     <div className="space-y-2">
                       <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                         Curveball
@@ -1417,39 +1662,250 @@ function InterviewerView() {
                       <div className="flex items-center gap-2">
                         <Select value={curveball} onValueChange={setCurveball}>
                           <SelectTrigger className="h-8">
-                            <SelectValue />
+                            <SelectValue placeholder="Select curveball..." />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="budget_cut">Budget cut</SelectItem>
-                            <SelectItem value="security_concern">Security concern</SelectItem>
-                            <SelectItem value="timeline_mismatch">Timeline mismatch</SelectItem>
-                            <SelectItem value="competitor_pressure">Competitor pressure</SelectItem>
+                            {getCurveballsForTrack(roleTrack).map((cb) => (
+                              <SelectItem key={cb.key} value={cb.key}>{cb.title}</SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
-                        <Button variant="outline" size="sm" onClick={() => injectCurveball(curveball)}>
+                        <Button variant="outline" size="sm" disabled={!curveball || !!sendingAction} onClick={() => injectCurveball(curveball)}>
                           Inject
                         </Button>
                       </div>
+                      {/* Custom curveball */}
+                      <div className="flex items-center gap-2">
+                        <Input
+                          className="h-8 text-xs"
+                          placeholder="Custom curveball text..."
+                          value={customCurveball}
+                          onChange={(e) => setCustomCurveball(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && customCurveball.trim()) {
+                              injectCustomCurveball(customCurveball)
+                            }
+                          }}
+                        />
+                        <Button variant="outline" size="sm" disabled={!customCurveball.trim() || !!sendingAction} onClick={() => injectCustomCurveball(customCurveball)}>
+                          Custom
+                        </Button>
+                      </div>
+                      {/* Consumption feedback */}
+                      {(() => {
+                        const injected = (events || []).filter((e: any) =>
+                          e.event_type === 'interviewer_action' &&
+                          e.payload?.action_type === 'inject_curveball' &&
+                          (e.payload?.curveball || e.payload?.curveball_key || e.payload?.custom_text)
+                        ).slice(0, 5)
+                        const consumed = new Set(
+                          (events || []).filter((e: any) => e.event_type === 'curveball_used')
+                            .map((e: any) => e.payload?.curveball).filter(Boolean)
+                        )
+                        if (injected.length === 0) return null
+                        return (
+                          <div className="space-y-1 mt-1">
+                            {injected.map((e: any, i: number) => {
+                              const key = e.payload?.curveball || e.payload?.curveball_key || 'custom'
+                              const isCustom = !!e.payload?.custom_text
+                              const label = isCustom
+                                ? (e.payload?.custom_text?.slice(0, 40) || 'Custom')
+                                : (getCurveballByKey(key)?.title || key)
+                              const isConsumed = consumed.has(key)
+                              return (
+                                <div key={e.id || i} className="flex items-center gap-1.5 text-[10px]">
+                                  {isConsumed ? (
+                                    <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                                  ) : (
+                                    <Clock3 className="h-3 w-3 text-amber-500" />
+                                  )}
+                                  <span className={isConsumed ? 'text-muted-foreground' : 'text-foreground'}>
+                                    {label.replace(/_/g, ' ')}
+                                  </span>
+                                  <Badge variant={isConsumed ? 'secondary' : 'outline'} className="h-4 px-1 text-[9px]">
+                                    {isConsumed ? 'Used' : 'Pending'}
+                                  </Badge>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )
+                      })()}
+
+                      {/* AI Curveball Suggestions — text rounds only */}
+                      {(() => {
+                        const isTextRound = activeRound?.round_type === 'text'
+                        return (
+                          <div className="mt-3 space-y-2 border-t border-dashed pt-3">
+                            <div className="flex items-center justify-between">
+                              <label className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                                <Sparkles className="h-3 w-3" />
+                                AI Suggestions
+                              </label>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 px-2 text-[10px]"
+                                disabled={curveballSuggestionsLoading || !isTextRound || session?.status !== 'live'}
+                                onClick={fetchCurveballSuggestions}
+                              >
+                                {curveballSuggestionsLoading ? (
+                                  <><Loader2 className="mr-1 h-3 w-3 animate-spin" />Analyzing...</>
+                                ) : (
+                                  'Suggest'
+                                )}
+                              </Button>
+                            </div>
+
+                            {!isTextRound && (
+                              <p className="text-[10px] text-muted-foreground">
+                                AI suggestions available for text rounds only.
+                              </p>
+                            )}
+
+                            {curveballSuggestionsContext && (
+                              <p className="text-[10px] text-muted-foreground">
+                                {curveballSuggestionsContext}
+                              </p>
+                            )}
+
+                            {isTextRound && aiCurveballSuggestions.length === 0 && !curveballSuggestionsLoading && !curveballSuggestionsContext && (
+                              <p className="text-[10px] text-muted-foreground">
+                                Click &ldquo;Suggest&rdquo; to analyze candidate&apos;s response and get targeted curveball ideas.
+                              </p>
+                            )}
+
+                            {aiCurveballSuggestions.map((suggestion) => (
+                              <div key={suggestion.id} className="space-y-1.5 rounded-lg border p-3">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-medium">{suggestion.title}</span>
+                                  <Badge
+                                    variant={suggestion.priority === 'high' ? 'destructive' : 'secondary'}
+                                    className="h-4 px-1.5 text-[9px]"
+                                  >
+                                    {suggestion.priority}
+                                  </Badge>
+                                </div>
+                                <p className="text-xs text-foreground">{suggestion.detail}</p>
+                                <p className="text-[10px] italic text-muted-foreground">
+                                  Why: {suggestion.rationale}
+                                </p>
+                                {suggestion.source_evidence && (
+                                  <p className="text-[10px] text-muted-foreground">
+                                    Based on: &ldquo;{suggestion.source_evidence.slice(0, 100)}&rdquo;
+                                  </p>
+                                )}
+                                <div className="flex gap-2 pt-1">
+                                  <Button
+                                    size="sm"
+                                    variant="default"
+                                    className="h-6 px-2 text-[10px]"
+                                    disabled={!!sendingAction}
+                                    onClick={() => approveAiCurveball(suggestion)}
+                                  >
+                                    Inject
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-6 px-2 text-[10px]"
+                                    onClick={() => dismissAiCurveball(suggestion.id)}
+                                  >
+                                    Dismiss
+                                  </Button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      })()}
                     </div>
+
+                    {/* Track-aware persona dropdown — only for conversational rounds */}
                     <div className="space-y-2">
                       <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                         Persona
                       </label>
-                      <div className="flex items-center gap-2">
-                        <Select value={persona} onValueChange={setPersona}>
-                          <SelectTrigger className="h-8">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="neutral">Neutral</SelectItem>
-                            <SelectItem value="skeptical">Skeptical</SelectItem>
-                            <SelectItem value="interested">Interested</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <Button variant="outline" size="sm" onClick={() => switchPersona(persona)}>
-                          Switch
-                        </Button>
-                      </div>
+                      {activeRound && ['voice', 'voice-realtime', 'email', 'agentic'].includes(activeRound.round_type) ? (
+                        <>
+                          <div className="flex items-center gap-2">
+                            <Select value={persona} onValueChange={setPersona}>
+                              <SelectTrigger className="h-8">
+                                <SelectValue placeholder="Select persona..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {getPersonasForTrack(roleTrack).map((p) => (
+                                  <SelectItem key={p.key} value={p.key}>{p.label}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <Button variant="outline" size="sm" disabled={!persona || !!sendingAction} onClick={() => switchPersona(persona)}>
+                              Switch
+                            </Button>
+                          </div>
+                          {/* Custom persona */}
+                          <div className="flex items-center gap-2">
+                            <Input
+                              className="h-8 text-xs"
+                              placeholder="Custom persona description..."
+                              value={customPersona}
+                              onChange={(e) => setCustomPersona(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' && customPersona.trim()) {
+                                  switchCustomPersona(customPersona)
+                                }
+                              }}
+                            />
+                            <Button variant="outline" size="sm" disabled={!customPersona.trim() || !!sendingAction} onClick={() => switchCustomPersona(customPersona)}>
+                              Custom
+                            </Button>
+                          </div>
+                          {/* Persona consumption feedback */}
+                          {(() => {
+                            const switched = (events || []).filter((e: any) =>
+                              e.event_type === 'interviewer_action' &&
+                              e.payload?.action_type === 'switch_persona' &&
+                              (e.payload?.persona || e.payload?.custom_text)
+                            ).slice(0, 3)
+                            const used = new Set(
+                              (events || []).filter((e: any) => e.event_type === 'persona_used')
+                                .map((e: any) => e.payload?.persona).filter(Boolean)
+                            )
+                            if (switched.length === 0) return null
+                            return (
+                              <div className="space-y-1 mt-1">
+                                {switched.map((e: any, i: number) => {
+                                  const key = e.payload?.persona || ''
+                                  const isCustomPersona = !!e.payload?.custom_text
+                                  const isUsed = used.has(key) || (isCustomPersona && used.has('custom'))
+                                  const personaLabel = isCustomPersona
+                                    ? (e.payload?.custom_text?.slice(0, 40) || 'Custom')
+                                    : (getPersonaDisplayName(key) || key.replace(/_/g, ' ') || 'Unknown')
+                                  return (
+                                    <div key={e.id || i} className="flex items-center gap-1.5 text-[10px]">
+                                      {isUsed ? (
+                                        <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                                      ) : (
+                                        <Clock3 className="h-3 w-3 text-amber-500" />
+                                      )}
+                                      <span className={isUsed ? 'text-muted-foreground' : 'text-foreground'}>
+                                        {personaLabel}
+                                      </span>
+                                      <Badge variant={isUsed ? 'secondary' : 'outline'} className="h-4 px-1 text-[9px]">
+                                        {isUsed ? 'Applied' : 'Pending'}
+                                      </Badge>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            )
+                          })()}
+                        </>
+                      ) : (
+                        <p className="text-xs text-muted-foreground italic">
+                          Persona controls only apply to conversational rounds (voice, email, agentic). The current round is text-based.
+                        </p>
+                      )}
                     </div>
                   </div>
 
@@ -1469,7 +1925,7 @@ function InterviewerView() {
                             <SelectItem value="L3">L3</SelectItem>
                           </SelectContent>
                         </Select>
-                        <Button variant="outline" size="sm" onClick={() => escalateDifficulty(escalationLevel)}>
+                        <Button variant="outline" size="sm" disabled={!!sendingAction} onClick={() => escalateDifficulty(escalationLevel)}>
                           Escalate
                         </Button>
                       </div>
@@ -1478,7 +1934,7 @@ function InterviewerView() {
                       <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                         Round Control
                       </label>
-                      <Button variant="outline" size="sm" className="w-full" onClick={endRound}>
+                      <Button variant="outline" size="sm" className="w-full" disabled={!!sendingAction} onClick={endRound}>
                         End round
                       </Button>
                     </div>
@@ -1486,7 +1942,7 @@ function InterviewerView() {
                       <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                         Gate Decision
                       </label>
-                      <Button variant="secondary" size="sm" className="w-full" onClick={() => sendDecision('proceed')}>
+                      <Button variant="secondary" size="sm" className="w-full" disabled={!!sendingAction} onClick={() => sendDecision('proceed')}>
                         <CheckCircle2 className="mr-2 h-4 w-4" />
                         Proceed
                       </Button>
@@ -1494,6 +1950,7 @@ function InterviewerView() {
                   </div>
                 </div>
 
+                {/* Red Flag Section */}
                 <div className="space-y-3 rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/30 px-4 py-4">
                   <div className="text-xs font-semibold uppercase tracking-[0.16em] text-red-700 dark:text-red-400">
                     Flag Red Flag
@@ -1534,6 +1991,7 @@ function InterviewerView() {
                     variant="destructive"
                     size="sm"
                     className="w-full"
+                    disabled={!!sendingAction}
                     onClick={() => {
                       sendAction('flag_red_flag', {
                         flag_type: flagType,
@@ -1543,17 +2001,18 @@ function InterviewerView() {
                       setFlagDescription('')
                     }}
                   >
-                    <AlertTriangle className="mr-2 h-4 w-4" />
-                    Flag
+                    {sendingAction === 'flag_red_flag' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <AlertTriangle className="mr-2 h-4 w-4" />}
+                    {sendingAction === 'flag_red_flag' ? 'Flagging...' : 'Flag'}
                   </Button>
                 </div>
 
+                {/* Stop Interview */}
                 <div className="flex items-center justify-between rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3">
                   <div>
                     <p className="text-sm font-semibold text-destructive">Stop interview</p>
                     <p className="text-xs text-destructive/80">Ends the session immediately.</p>
                   </div>
-                  <Button variant="destructive" size="sm" onClick={() => sendDecision('stop')}>
+                  <Button variant="destructive" size="sm" disabled={!!sendingAction} onClick={() => sendDecision('stop')}>
                     <Slash className="mr-2 h-4 w-4" />
                     Stop
                   </Button>
@@ -1564,11 +2023,18 @@ function InterviewerView() {
           </Card>
 
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Interviewer Notes</CardTitle>
-              <CardDescription>Saved to session action logs when submitted.</CardDescription>
+            <CardHeader className="py-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-base">Interviewer Notes</CardTitle>
+                  <CardDescription className="text-xs mt-0.5">Saved to session action logs when submitted.</CardDescription>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => setShowNotes((prev) => !prev)}>
+                  {showNotes ? 'Hide' : 'Show'}
+                </Button>
+              </div>
             </CardHeader>
-            <CardContent className="space-y-3">
+            {showNotes && (<CardContent className="space-y-3">
               <Textarea
                 rows={6}
                 value={notes}
@@ -1577,20 +2043,32 @@ function InterviewerView() {
               />
               <Button
                 variant="secondary"
+                disabled={!!sendingAction || !notes.trim()}
                 onClick={async () => {
                   if (!notes.trim()) return
-                  await sendAction('interviewer_note', { note: notes })
-                  setNotes('')
+                  const result = await sendAction('interviewer_note', { note: notes })
+                  if (result?.ok) {
+                    setNotes('')
+                    setNoteSavedToast(true)
+                    setTimeout(() => setNoteSavedToast(false), 2500)
+                  }
                 }}
               >
-                <BadgeCheck className="h-4 w-4" />
-                Save Note
+                {sendingAction === 'interviewer_note' ? <Loader2 className="h-4 w-4 animate-spin" /> : <BadgeCheck className="h-4 w-4" />}
+                {sendingAction === 'interviewer_note' ? 'Saving...' : 'Save Note'}
               </Button>
               <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
                 <ShieldAlert className="mb-2 h-4 w-4" />
                 All interviewer actions, notes, and magic-link events are logged for audit and post-assessment review.
               </div>
+              {noteSavedToast && (
+                <div className="flex items-center gap-2 rounded-lg border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-600 dark:text-emerald-400 animate-in fade-in slide-in-from-top-1 duration-200">
+                  <CheckCircle2 className="h-4 w-4 shrink-0" />
+                  Note saved successfully.
+                </div>
+              )}
             </CardContent>
+            )}
           </Card>
 
           <Card>
@@ -1615,19 +2093,23 @@ function InterviewerView() {
                         if (event.key === 'Enter') {
                           const value = (event.currentTarget.value || '').trim()
                           if (!value) return
+                          const lowerValue = value.toLowerCase()
+                          const alreadySent = followupThread.some(
+                            (q) => q.question.toLowerCase().trim() === lowerValue
+                          ) || localFollowups.some(
+                            (q) => q.question.toLowerCase().trim() === lowerValue
+                          )
+                          if (alreadySent) return
                           const optimisticId = `local-${Date.now()}`
-                          setLocalFollowups((prev) => {
-                            if (prev.some((item) => item.question === value)) return prev
-                            return [
-                              ...prev,
-                              {
-                                id: optimisticId,
-                                question: value,
-                                round_number: targetRoundNumber ?? undefined,
-                                created_at: new Date().toISOString()
-                              }
-                            ]
-                          })
+                          setLocalFollowups((prev) => [
+                            ...prev,
+                            {
+                              id: optimisticId,
+                              question: value,
+                              round_number: targetRoundNumber ?? undefined,
+                              created_at: new Date().toISOString()
+                            }
+                          ])
                           sendAction('manual_followup', {
                             followup: value,
                             round_number: targetRoundNumber ?? null,
@@ -1640,24 +2122,29 @@ function InterviewerView() {
                     <Button
                       variant="outline"
                       size="sm"
+                      disabled={sendingAction === 'manual_followup'}
                       onClick={(event) => {
                         const input = (event.currentTarget
                           .previousElementSibling as HTMLInputElement | null)
                         const value = (input?.value || '').trim()
                         if (!value) return
+                        const lowerValue = value.toLowerCase()
+                        const alreadySent = followupThread.some(
+                          (q) => q.question.toLowerCase().trim() === lowerValue
+                        ) || localFollowups.some(
+                          (q) => q.question.toLowerCase().trim() === lowerValue
+                        )
+                        if (alreadySent) return
                         const optimisticId = `local-${Date.now()}`
-                        setLocalFollowups((prev) => {
-                          if (prev.some((item) => item.question === value)) return prev
-                          return [
-                            ...prev,
-                            {
-                              id: optimisticId,
-                              question: value,
-                              round_number: targetRoundNumber ?? undefined,
-                              created_at: new Date().toISOString()
-                            }
-                          ]
-                        })
+                        setLocalFollowups((prev) => [
+                          ...prev,
+                          {
+                            id: optimisticId,
+                            question: value,
+                            round_number: targetRoundNumber ?? undefined,
+                            created_at: new Date().toISOString()
+                          }
+                        ])
                         sendAction('manual_followup', {
                           followup: value,
                           round_number: targetRoundNumber ?? null,
@@ -1666,7 +2153,14 @@ function InterviewerView() {
                         if (input) input.value = ''
                       }}
                     >
-                      Add
+                      {sendingAction === 'manual_followup' ? (
+                        <>
+                          <span className="mr-1 inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                          Sending...
+                        </>
+                      ) : (
+                        'Add'
+                      )}
                     </Button>
                   </div>
                   {mergedGateFollowups.length > 0 && (
@@ -1684,20 +2178,25 @@ function InterviewerView() {
                             <Button
                               variant="outline"
                               size="sm"
+                              disabled={!!sendingAction}
                               onClick={() => {
+                                const lowerItem = item.toLowerCase().trim()
+                                const alreadySent = followupThread.some(
+                                  (q) => q.question.toLowerCase().trim() === lowerItem
+                                ) || localFollowups.some(
+                                  (q) => q.question.toLowerCase().trim() === lowerItem
+                                )
+                                if (alreadySent) return
                                 const optimisticId = `local-${Date.now()}`
-                                setLocalFollowups((prev) => {
-                                  if (prev.some((row) => row.question === item)) return prev
-                                  return [
-                                    ...prev,
-                                    {
-                                      id: optimisticId,
-                                      question: item,
-                                      round_number: targetRoundNumber ?? undefined,
-                                      created_at: new Date().toISOString()
-                                    }
-                                  ]
-                                })
+                                setLocalFollowups((prev) => [
+                                  ...prev,
+                                  {
+                                    id: optimisticId,
+                                    question: item,
+                                    round_number: targetRoundNumber ?? undefined,
+                                    created_at: new Date().toISOString()
+                                  }
+                                ])
                                 sendAction('manual_followup', {
                                   followup: item,
                                   round_number: targetRoundNumber ?? null,
@@ -1705,7 +2204,11 @@ function InterviewerView() {
                                 })
                               }}
                             >
-                              Ask now
+                              {sendingAction === 'manual_followup' ? (
+                                <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                              ) : (
+                                'Ask now'
+                              )}
                             </Button>
                           </li>
                         ))}

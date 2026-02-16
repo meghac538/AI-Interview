@@ -32,28 +32,51 @@ export async function POST(request: Request) {
       .filter((item) => item.id && item.question)
       .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
 
-    const answerMap = new Map<string, string>()
+    // Dual answer matching: by question_id (UUID) AND by question text
+    const answerByIdMap = new Map<string, string>()
+    const answerByTextMap = new Map<string, string>()
     for (const answer of answers || []) {
+      const ans = answer.payload?.answer || ''
       if (answer.payload?.question_id) {
-        answerMap.set(answer.payload.question_id, answer.payload?.answer || '')
+        answerByIdMap.set(answer.payload.question_id, ans)
+      }
+      const qText = String(answer.payload?.question || '').toLowerCase().trim()
+      if (qText) {
+        answerByTextMap.set(qText, ans)
       }
     }
 
-    const deduped = new Map<string, any>()
+    // Deduplicate by ID first, then by question text
+    const seenIds = new Set<string>()
+    const seenTexts = new Set<string>()
+    const deduped: typeof questionItems = []
     for (const item of questionItems) {
-      if (!deduped.has(item.id)) {
-        deduped.set(item.id, item)
-      }
+      if (item.id && seenIds.has(item.id)) continue
+      const textKey = (item.question || '').toLowerCase().trim()
+      if (textKey && seenTexts.has(textKey)) continue
+      if (item.id) seenIds.add(item.id)
+      if (textKey) seenTexts.add(textKey)
+      deduped.push(item)
     }
 
-    const thread = Array.from(deduped.values()).map((item: any) => ({
-      id: item.id,
-      question: item.question,
-      round_number: item.round_number,
-      source: item.source,
-      answered: answerMap.has(item.id),
-      answer: answerMap.get(item.id)
-    }))
+    const thread = deduped.map((item: any) => {
+      const textKey = (item.question || '').toLowerCase().trim()
+      const answeredById = item.id ? answerByIdMap.has(item.id) : false
+      const answeredByText = textKey ? answerByTextMap.has(textKey) : false
+      const isAnswered = answeredById || answeredByText
+      return {
+        id: item.id,
+        question: item.question,
+        round_number: item.round_number,
+        source: item.source,
+        answered: isAnswered,
+        answer: answeredById
+          ? answerByIdMap.get(item.id)
+          : answeredByText
+            ? answerByTextMap.get(textKey)
+            : undefined
+      }
+    })
 
     return NextResponse.json({ thread })
   } catch (error: any) {

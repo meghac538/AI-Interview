@@ -44,7 +44,7 @@ export function VoiceRealtimeUI({ round }: { round: Round }) {
             round_number: round.round_number
           })
         })
-        console.log('✅ Round marked as completed')
+        console.log('Round marked as completed')
       } catch (err) {
         console.error('Failed to complete round:', err)
       }
@@ -76,33 +76,32 @@ export function VoiceRealtimeUI({ round }: { round: Round }) {
   return (
     <div className="space-y-5">
       {/* Connection Status */}
-      <div className="flex items-center justify-between rounded-2xl border border-ink-100 bg-white px-6 py-4">
+      <div className="flex items-center justify-between rounded-2xl border bg-card px-6 py-4">
         <div className="flex items-center gap-3">
           <div
             className={`h-3 w-3 rounded-full ${
               isConnected
-                ? 'animate-pulse bg-signal-500'
+                ? 'animate-pulse bg-emerald-500'
                 : isConnecting
-                ? 'animate-pulse bg-caution-500'
-                : 'bg-ink-300'
+                ? 'animate-pulse bg-amber-500'
+                : 'bg-muted-foreground'
             }`}
           />
           <span className="text-sm font-semibold">
             {isConnected ? `Live Call - ${formatTime(duration)}` : isConnecting ? 'Connecting...' : 'Ready to Start'}
           </span>
           {isConnected && isSpeaking && (
-            <Badge tone="sky" className="animate-pulse">
+            <Badge variant="secondary" className="animate-pulse">
               AI Speaking
             </Badge>
           )}
         </div>
 
         <Button
-          variant={isConnected ? 'secondary' : 'primary'}
+          variant={isConnected ? 'destructive' : 'default'}
           size="sm"
           onClick={isConnected ? handleDisconnect : connect}
           disabled={isConnecting}
-          className={isConnected ? 'bg-signal-500 hover:bg-signal-600' : ''}
         >
           {isConnected ? (
             <>
@@ -120,10 +119,10 @@ export function VoiceRealtimeUI({ round }: { round: Round }) {
 
       {/* Error Display */}
       {error && (
-        <div className="rounded-2xl border border-signal-200 bg-signal-50 px-4 py-3">
-          <p className="text-sm font-semibold text-signal-800">Connection Error</p>
-          <p className="text-sm text-signal-700">{error}</p>
-          <p className="mt-2 text-xs text-signal-600">
+        <div className="rounded-2xl border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/40 px-4 py-3">
+          <p className="text-sm font-semibold text-red-800 dark:text-red-200">Connection Error</p>
+          <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
+          <p className="mt-2 text-xs text-red-600 dark:text-red-400">
             Make sure you've allowed microphone access in your browser.
           </p>
         </div>
@@ -131,13 +130,13 @@ export function VoiceRealtimeUI({ round }: { round: Round }) {
 
       {/* Audio Visualizer */}
       {isConnected && (
-        <div className="rounded-2xl border border-ink-100 bg-gradient-to-br from-skywash-50 to-white px-6 py-8">
+        <div className="rounded-2xl border bg-gradient-to-br from-blue-50 to-card dark:from-blue-950/30 px-6 py-8">
           <div className="flex items-center justify-center gap-2">
             {/* Simple audio visualizer bars */}
             {[...Array(7)].map((_, i) => (
               <div
                 key={i}
-                className={`w-2 rounded-full bg-skywash-500 transition-all ${
+                className={`w-2 rounded-full bg-blue-500 transition-all ${
                   isSpeaking ? 'animate-pulse' : ''
                 }`}
                 style={{
@@ -148,9 +147,9 @@ export function VoiceRealtimeUI({ round }: { round: Round }) {
             ))}
           </div>
           <div className="mt-4 text-center">
-            <div className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 shadow-sm">
-              <Mic className={`h-4 w-4 ${isSpeaking ? 'text-signal-500' : 'text-skywash-600'}`} />
-              <span className="text-sm font-medium text-ink-700">
+            <div className="inline-flex items-center gap-2 rounded-full bg-card px-4 py-2 shadow-sm">
+              <Mic className={`h-4 w-4 ${isSpeaking ? 'text-emerald-500' : 'text-blue-600'}`} />
+              <span className="text-sm font-medium text-foreground">
                 {isSpeaking ? 'AI is speaking...' : 'Listening...'}
               </span>
             </div>
@@ -160,7 +159,7 @@ export function VoiceRealtimeUI({ round }: { round: Round }) {
 
       {/* Live Transcript */}
       {transcript.length > 0 && (
-        <div className="rounded-2xl border border-ink-100 bg-white px-4 py-4">
+        <div className="rounded-2xl border bg-card px-4 py-4">
           <h3 className="mb-3 text-sm font-semibold">Live Transcript</h3>
           <div className="max-h-64 space-y-3 overflow-y-auto">
             {transcript.map((item, index) => (
@@ -168,8 +167,8 @@ export function VoiceRealtimeUI({ round }: { round: Round }) {
                 key={index}
                 className={`rounded-lg px-3 py-2 text-sm ${
                   item.role === 'user'
-                    ? 'bg-ink-50 text-ink-800'
-                    : 'bg-skywash-50 text-ink-800'
+                    ? 'bg-muted text-foreground'
+                    : 'bg-blue-50 dark:bg-blue-950/30 text-foreground'
                 }`}
               >
                 <span className="font-semibold">
@@ -184,39 +183,39 @@ export function VoiceRealtimeUI({ round }: { round: Round }) {
 
       {/* Instructions */}
       {!isConnected && (
-        <div className="rounded-2xl bg-skywash-50 px-4 py-4">
-          <p className="text-sm text-ink-700">
+        <div className="rounded-2xl bg-blue-50 dark:bg-blue-950/40 px-4 py-4">
+          <p className="text-sm text-foreground">
             <strong>Instructions:</strong> Click "Start Call" to begin your voice conversation with an AI prospect.
             This is a live role-play exercise where you'll conduct a discovery call, handle objections, and
             demonstrate your sales skills. Speak naturally - the AI will respond in real-time.
           </p>
-          <div className="mt-3 space-y-1 text-xs text-ink-600">
-            <p>• Your microphone will be activated when you connect</p>
-            <p>• The conversation is transcribed in real-time</p>
-            <p>• Duration: {round.duration_minutes} minutes</p>
-            <p>• Difficulty level: {round.config.initial_difficulty || 3}/5</p>
+          <div className="mt-3 space-y-1 text-xs text-muted-foreground">
+            <p>Your microphone will be activated when you connect</p>
+            <p>The conversation is transcribed in real-time</p>
+            <p>Duration: {round.duration_minutes} minutes</p>
+            <p>Difficulty level: {round.config.initial_difficulty || 3}/5</p>
           </div>
         </div>
       )}
 
       {/* Round Requirements */}
-      <div className="rounded-2xl border border-ink-100 bg-white px-4 py-4">
+      <div className="rounded-2xl border bg-card px-4 py-4">
         <h3 className="mb-3 text-sm font-semibold">Round Objectives</h3>
-        <ul className="space-y-2 text-sm text-ink-700">
+        <ul className="space-y-2 text-sm text-foreground">
           <li className="flex items-start gap-2">
-            <span className="mt-0.5 h-1.5 w-1.5 rounded-full bg-skywash-500" />
+            <span className="mt-0.5 h-1.5 w-1.5 rounded-full bg-blue-500" />
             Ask discovery questions to understand their needs
           </li>
           <li className="flex items-start gap-2">
-            <span className="mt-0.5 h-1.5 w-1.5 rounded-full bg-skywash-500" />
+            <span className="mt-0.5 h-1.5 w-1.5 rounded-full bg-blue-500" />
             Handle objections professionally and confidently
           </li>
           <li className="flex items-start gap-2">
-            <span className="mt-0.5 h-1.5 w-1.5 rounded-full bg-skywash-500" />
+            <span className="mt-0.5 h-1.5 w-1.5 rounded-full bg-blue-500" />
             Demonstrate value and build rapport
           </li>
           <li className="flex items-start gap-2">
-            <span className="mt-0.5 h-1.5 w-1.5 rounded-full bg-skywash-500" />
+            <span className="mt-0.5 h-1.5 w-1.5 rounded-full bg-blue-500" />
             Close for next steps
           </li>
         </ul>

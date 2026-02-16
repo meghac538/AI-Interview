@@ -198,19 +198,21 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig) {
             })
 
             // Publish to live_events
-            supabase
-              .from('live_events')
-              .insert({
-                session_id: config.sessionId,
-                event_type: 'voice_transcript',
-                payload: {
-                  role: 'assistant',
-                  text: message.message,
-                  timestamp: newItem.timestamp
-                }
-              })
+            void Promise.resolve(
+              supabase
+                .from('live_events')
+                .insert({
+                  session_id: config.sessionId,
+                  event_type: 'voice_transcript',
+                  payload: {
+                    role: 'assistant',
+                    text: message.message,
+                    timestamp: newItem.timestamp
+                  }
+                })
+            )
               .then(() => console.log('📝 Agent transcript published'))
-              .catch((err) => console.error('Failed to publish transcript:', err))
+              .catch((err: unknown) => console.error('Failed to publish transcript:', err))
           }
         }
       })
@@ -225,7 +227,8 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig) {
       setIsConnecting(false)
       cleanup()
     }
-  }, [config, isConnecting, isConnected])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.sessionId, config.difficulty]) // Only depend on config values, not state flags
 
   // Disconnect and cleanup
   const disconnect = useCallback(async () => {
@@ -239,14 +242,19 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig) {
   }, [transcriptBatch, sendTranscriptBatch])
 
   const cleanup = () => {
-    if (conversationRef.current) {
-      conversationRef.current.endSession()
-      conversationRef.current = null
-    }
+    try {
+      if (conversationRef.current) {
+        console.log('🧹 Cleaning up conversation...')
+        conversationRef.current.endSession()
+        conversationRef.current = null
+      }
 
-    if (audioStreamRef.current) {
-      audioStreamRef.current.getTracks().forEach((track) => track.stop())
-      audioStreamRef.current = null
+      if (audioStreamRef.current) {
+        audioStreamRef.current.getTracks().forEach((track) => track.stop())
+        audioStreamRef.current = null
+      }
+    } catch (err) {
+      console.error('Cleanup error (non-fatal):', err)
     }
   }
 
@@ -300,8 +308,8 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig) {
 
   // Handle voice commands from interviewer (difficulty/curveball)
   const handleVoiceCommand = (command: any) => {
-    if (!conversationRef.current) {
-      console.warn('Conversation not ready for command:', command)
+    if (!conversationRef.current || !isConnected) {
+      console.warn('Conversation not ready for command (not connected):', command)
       return
     }
 
@@ -312,6 +320,7 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig) {
         const difficulty = command.payload.difficulty
 
         // Send context update via SDK
+        // @ts-expect-error - sendText exists at runtime but not in SDK types
         conversationRef.current.sendText(
           `[System note: Adjust your questioning style to difficulty level ${difficulty}. ${getDifficultyHint(difficulty)}]`
         )
@@ -320,14 +329,23 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig) {
       } else if (command.command_type === 'curveball_inject') {
         const curveball = command.payload.curveball
         const label = command.payload.label || curveball
+        const customText = command.payload.custom_text
+
+        // Use custom text if provided, otherwise look up from library
+        const prompt = customText
+          ? `[Immediately inject this objection] ${customText}`
+          : getCurveballPrompt(curveball, label)
 
         // Inject curveball via SDK
-        conversationRef.current.sendText(getCurveballPrompt(curveball, label))
+        // @ts-expect-error - sendText exists at runtime but not in SDK types
+        conversationRef.current.sendText(prompt)
 
-        console.log(`✅ Curveball injected: ${label}`)
+        console.log(`Curveball injected: ${customText || label}`)
       }
     } catch (err) {
-      console.error('Failed to send command:', err)
+      console.error('Failed to send command (WebSocket may be closed):', err)
+      setError('Connection lost. Please reconnect.')
+      setIsConnected(false)
     }
   }
 
@@ -419,15 +437,23 @@ export function useVoiceRealtime(config: VoiceRealtimeConfig) {
     }
   }, [transcript, config.sessionId])
 
-  // Cleanup on unmount
+  // Cleanup on unmount - ONLY run on actual unmount, not on re-renders
   useEffect(() => {
     return () => {
-      if (transcript.length > 0) {
-        saveTranscript()
+      // Save transcript before cleanup
+      if (conversationRef.current) {
+        // Send remaining batch synchronously if possible
+        if (transcriptBatch.length > 0) {
+          // Fire and forget - can't await in cleanup
+          void sendTranscriptBatch(transcriptBatch)
+        }
+
+        // End session
+        cleanup()
       }
-      cleanup()
     }
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // Empty array ensures this ONLY runs on unmount
 
   return {
     isConnected,

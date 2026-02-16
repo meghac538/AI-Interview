@@ -1,10 +1,6 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase/server'
-import OpenAI from 'openai'
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-})
+import { getAIClient, mapModel } from '@/lib/ai/client'
 
 // Type definitions for AI response structures
 interface SayMeterResult {
@@ -95,8 +91,8 @@ Return JSON:
 
 Be strict but fair. Most calls should score 40-70. Only exceptional performance scores 80+.`
 
-    const sayMeterResponse = await openai.chat.completions.create({
-      model: 'gpt-4o',
+    const sayMeterResponse = await getAIClient().chat.completions.create({
+      model: mapModel('gpt-4o'),
       messages: [
         { role: 'system', content: sayMeterPrompt }
       ],
@@ -133,8 +129,8 @@ Return JSON object:
 
 Be selective. Only suggest if there's a clear gap or opportunity. Empty array is fine.`
 
-    const suggestionsResponse = await openai.chat.completions.create({
-      model: 'gpt-4o',
+    const suggestionsResponse = await getAIClient().chat.completions.create({
+      model: mapModel('gpt-4o'),
       messages: [
         { role: 'system', content: suggestionsPrompt }
       ],

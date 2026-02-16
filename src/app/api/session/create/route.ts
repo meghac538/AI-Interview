@@ -1,16 +1,12 @@
 import { NextResponse } from 'next/server'
-import OpenAI from 'openai'
 import { supabaseAdmin } from '@/lib/supabase/server'
-import { randomUUID } from 'crypto'
 import { extractResumeSkills, computeInterviewLevel } from '@/lib/db/helpers'
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-})
+import { getAIClient, mapModel } from '@/lib/ai/client'
+import { generateSessionBlueprints, getValidatedQuestionContext } from '@/lib/ai/blueprint-generator'
 
 export async function POST(request: Request) {
   try {
-    const { candidate_name, role, level, track, difficulty } = await request.json()
+    const { candidate_name, candidate_email, role, level, track, difficulty } = await request.json()
 
     // Validate inputs
     if (!candidate_name || !role || !level) {
@@ -43,6 +39,10 @@ export async function POST(request: Request) {
     const experience_years_max = expMatch ? parseInt(expMatch[2], 10) : null
 
     // Step 1: Create job profile
+    // job_profiles has a CHECK constraint on track — map unsupported tracks to a valid value
+    const JOB_PROFILE_VALID_TRACKS = ['sales', 'agentic_eng', 'fullstack', 'marketing', 'implementation', 'HR', 'security']
+    const jobProfileTrack = JOB_PROFILE_VALID_TRACKS.includes(resolvedTrack) ? resolvedTrack : 'implementation'
+
     const { data: jobProfile, error: jobError } = await supabaseAdmin
       .from('job_profiles')
       .insert({
@@ -50,7 +50,7 @@ export async function POST(request: Request) {
         title: role,
         location: 'Remote',
         level_band: level.toLowerCase() as 'junior' | 'mid' | 'senior',
-        track: resolvedTrack,
+        track: jobProfileTrack,
         role_success_criteria: getRoleSuccessCriteria(resolvedTrack),
         must_have_flags: [],
         disqualifiers: [],
@@ -63,20 +63,36 @@ export async function POST(request: Request) {
 
     if (jobError) throw jobError
 
-    // Step 2: Create canonical job row (best-effort for legacy FK compatibility)
-    const { error: canonicalJobError } = await supabaseAdmin
+    // Step 2: Create canonical job row (required for candidates FK)
+    let canonicalJobId: string | null = null
+    const { data: canonicalJob, error: canonicalJobError } = await supabaseAdmin
       .from('jobs')
       .insert({
         job_id: jobProfile.job_id,
         job_title: role,
         location: 'Remote'
       })
+      .select('id')
+      .single()
+
     if (canonicalJobError) {
-      console.warn('Jobs table insert skipped:', canonicalJobError.message)
+      // If insert failed (e.g. duplicate), try to find existing
+      const { data: existingJob } = await supabaseAdmin
+        .from('jobs')
+        .select('id')
+        .eq('job_id', jobProfile.job_id)
+        .single()
+      canonicalJobId = existingJob?.id || null
+      if (!canonicalJobId) {
+        console.warn('Jobs table insert failed:', canonicalJobError.message)
+      }
+    } else {
+      canonicalJobId = canonicalJob.id
     }
 
     // Step 3: Find existing candidate or create new one
-    const candidateEmail = `${candidate_name.toLowerCase().replace(/\s+/g, '.')}@temp.com`
+    // Use provided email for lookup (links to candidate from prior workflow), fall back to auto-generated
+    const candidateEmail = candidate_email || `${candidate_name.toLowerCase().replace(/\s+/g, '.')}@temp.com`
     const { data: existingCandidate } = await supabaseAdmin
       .from('candidates')
       .select('*')
@@ -87,14 +103,15 @@ export async function POST(request: Request) {
 
     let candidate = existingCandidate
     if (!candidate) {
+      if (!canonicalJobId) throw new Error('Failed to create or find canonical job record')
+
       const { data: newCandidate, error: candidateError } = await supabaseAdmin
         .from('candidates')
         .insert({
-          hash_id: randomUUID(),
           rippling_candidate_id: `temp_${Date.now()}`,
           name: candidate_name,
           email: candidateEmail,
-          job_id: jobProfile.job_id,
+          job_id: canonicalJobId,
           applied_at: new Date().toISOString(),
           status: 'live_scheduled'
         })
@@ -126,96 +143,108 @@ export async function POST(request: Request) {
 
     if (sessionError) throw sessionError
 
-    const useVoiceRealtime = track !== undefined && difficulty !== undefined && resolvedTrack === 'sales'
+    // Retrieve PI screening for candidate-specific adaptation
+    const { data: piScreenings, error: piError } = await supabaseAdmin
+      .from('pi_screenings')
+      .select('*')
+      .eq('candidate_id', candidate.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
 
-    let roundPlan: Array<Record<string, any>>
-    let questionSet: Record<string, any>
+    if (piError) {
+      console.warn('PI screenings query failed (table may not exist yet):', piError.message)
+    }
+    const latestPi = piScreenings?.[0] || null
+    const piScore = latestPi?.pi_score_overall ?? null
+    const interviewLevel = computeInterviewLevel(level, piScore, experience_years_max)
+    const resumeSkills = extractResumeSkills(latestPi?.resume_analysis)
+    const piDimensionScores = latestPi?.dimension_scores || {}
 
-    if (useVoiceRealtime) {
-      roundPlan = [
-        {
-          round_number: 1,
-          round_type: 'voice-realtime' as const,
-          title: 'Round 1: Live Voice Call with AI Prospect',
-          prompt: 'Conduct a live voice discovery call with an AI prospect. Ask discovery questions, handle objections, demonstrate value, and close for next steps.',
-          duration_minutes: 12,
-          status: 'pending' as const,
-          config: {
-            persona_id: null,
-            scenario_id: null,
-            initial_difficulty: voiceDifficulty,
-            allow_curveballs: false,
-            voice: 'sage'
-          }
-        }
-      ]
-      questionSet = {}
-    } else {
-      const { data: blueprints } = await supabaseAdmin
-        .from('assessment_blueprints')
-        .select('*')
-        .eq('track', resolvedTrack)
-        .order('created_at', { ascending: true })
-        .limit(3)
+    // Fetch validated question items as few-shot context for AI prompt generation
+    const validatedExamples = await getValidatedQuestionContext(resolvedTrack)
 
-      const { data: generatedItems } = await supabaseAdmin
-        .from('generated_question_items')
-        .select('*')
-        .eq('track', resolvedTrack)
-        .eq('status', 'validated')
-        .order('created_at', { ascending: false })
-        .limit(3)
+    // Build candidate resume context from candidate record and PI screening
+    const candidateContext: Record<string, any> = {}
+    if (candidate.combined_summary) candidateContext.summary = candidate.combined_summary
+    if (Array.isArray(candidate.skills) && candidate.skills.length > 0) candidateContext.skills = candidate.skills
+    if (Array.isArray(candidate.education) && candidate.education.length > 0) candidateContext.education = candidate.education
+    if (Array.isArray(candidate.certificates) && candidate.certificates.length > 0) candidateContext.certificates = candidate.certificates
+    if (candidate.previous_companies) candidateContext.previous_companies = candidate.previous_companies
+    if (candidate.resume_pros_cons) candidateContext.resume_pros_cons = candidate.resume_pros_cons
+    if (candidate.soft_skills) candidateContext.soft_skills = candidate.soft_skills
+    if (candidate.required_skills) candidateContext.required_skills = candidate.required_skills
+    if (candidate.good_to_have_skills) candidateContext.good_to_have_skills = candidate.good_to_have_skills
+    if (latestPi?.resume_analysis) candidateContext.resume_analysis = latestPi.resume_analysis
 
-      const { data: piScreenings, error: piError } = await supabaseAdmin
-        .from('pi_screenings')
-        .select('*')
-        .eq('candidate_id', candidate.id)
-        .order('created_at', { ascending: false })
-        .limit(1)
-
-      if (piError) {
-        console.warn('PI screenings query failed (table may not exist yet):', piError.message)
-      }
-      const latestPi = piScreenings?.[0] || null
-      const piScore = latestPi?.pi_score_overall ?? null
-      const interviewLevel = computeInterviewLevel(level, piScore, experience_years_max)
-      const resumeSkills = extractResumeSkills(latestPi?.resume_analysis)
-      const piDimensionScores = latestPi?.dimension_scores || {}
-
-      const roleSignals = {
-        jd_text: jobProfile.role_success_criteria,
-        must_haves: jobProfile.must_have_flags,
-        nice_to_haves: jobProfile.disqualifiers,
-        ai_native_behaviors: resumeSkills.filter((s: string) => /ai|ml|llm|gpt|agent|automat/i.test(s)),
-        track_skill_graph: {
-          extracted_skills: resumeSkills,
-          pi_dimension_scores: piDimensionScores,
-          pi_score_overall: piScore,
-          interview_level: interviewLevel
-        },
-        past_outcomes: {
-          pi_pass_fail: latestPi?.pass_fail ?? null,
-          pi_score: piScore
-        },
-        failure_modes: {}
-      }
-
-      roundPlan =
-        generatedItems && generatedItems.length > 0
-          ? buildRoundsFromGeneratedItems(generatedItems, interviewLevel)
-          : await buildRoundsFromBlueprints(blueprints || [], roleSignals, resolvedTrack, interviewLevel)
-
-      if (!roundPlan || roundPlan.length === 0) {
-        roundPlan = buildFallbackRounds(resolvedTrack, role, interviewLevel)
-      }
-
-      questionSet = {
-        interview_level: interviewLevel,
-        role_signals: roleSignals,
-        pi_screening_id: latestPi?.id || null,
+    const roleSignals = {
+      jd_text: jobProfile.role_success_criteria,
+      must_haves: jobProfile.must_have_flags,
+      nice_to_haves: jobProfile.disqualifiers,
+      ai_native_behaviors: resumeSkills.filter((s: string) => /ai|ml|llm|gpt|agent|automat/i.test(s)),
+      track_skill_graph: {
+        extracted_skills: resumeSkills,
+        pi_dimension_scores: piDimensionScores,
         pi_score_overall: piScore,
-        pi_pass_fail: latestPi?.pass_fail ?? null
+        interview_level: interviewLevel
+      },
+      past_outcomes: {
+        pi_pass_fail: latestPi?.pass_fail ?? null,
+        pi_score: piScore
+      },
+      failure_modes: {},
+      voice_difficulty: voiceDifficulty,
+      // Candidate resume context for AI to tailor questions
+      candidate_context: Object.keys(candidateContext).length > 0 ? candidateContext : undefined,
+      // Include validated question examples so AI can reference them when generating prompts
+      example_questions: validatedExamples.length > 0
+        ? validatedExamples.map((q: any) => ({ competency: q.competency, prompt: q.prompt, expected_output: q.expected_output }))
+        : undefined
+    }
+
+    // Fetch pre-validated question items (Tier 1)
+    const { data: generatedItems } = await supabaseAdmin
+      .from('generated_question_items')
+      .select('*')
+      .eq('track', resolvedTrack)
+      .eq('status', 'validated')
+      .order('created_at', { ascending: false })
+      .limit(3)
+
+    let roundPlan: Array<Record<string, any>> =
+      generatedItems && generatedItems.length > 0
+        ? buildRoundsFromGeneratedItems(generatedItems, interviewLevel)
+        : []
+
+    // Tier 2: Generate dynamic blueprints and build rounds from them
+    if (roundPlan.length === 0) {
+      try {
+        // Get track-specific round templates as blueprint seeds
+        const templates = buildFallbackRounds(resolvedTrack, role, interviewLevel) as Array<Record<string, any>>
+
+        // Create blueprints in DB for this session
+        const blueprints = await generateSessionBlueprints(
+          session.id, resolvedTrack, role, interviewLevel, roleSignals, templates
+        )
+
+        if (blueprints.length > 0) {
+          roundPlan = await buildRoundsFromBlueprints(blueprints, roleSignals, resolvedTrack, interviewLevel, templates)
+        }
+      } catch (blueprintError: any) {
+        console.error('Dynamic blueprint generation failed:', blueprintError.message)
       }
+    }
+
+    // Tier 3: Final fallback with hardcoded rounds (should rarely happen now)
+    if (!roundPlan || roundPlan.length === 0) {
+      roundPlan = buildFallbackRounds(resolvedTrack, role, interviewLevel) as Array<Record<string, any>>
+    }
+
+    const questionSet = {
+      interview_level: interviewLevel,
+      role_signals: roleSignals,
+      pi_screening_id: latestPi?.id || null,
+      pi_score_overall: piScore,
+      pi_pass_fail: latestPi?.pass_fail ?? null
     }
 
     // Step 5: Create scope package with round plan
@@ -226,7 +255,7 @@ export async function POST(request: Request) {
         generated_at: new Date().toISOString(),
         track: resolvedTrack,
         round_plan: roundPlan,
-        question_set: useVoiceRealtime ? {} : questionSet,
+        question_set: roundPlan.some((r: Record<string, any>) => r.round_type === 'voice-realtime') ? {} : questionSet,
         simulation_payloads: {
           role_widget_config: {
             role_family: resolvedTrack,
@@ -269,7 +298,7 @@ export async function POST(request: Request) {
   }
 }
 
-async function buildRoundsFromBlueprints(blueprints: any[], roleSignals: any, track: string, level?: string) {
+async function buildRoundsFromBlueprints(blueprints: any[], roleSignals: any, track: string, level?: string, fallbackTemplates?: Array<Record<string, any>>) {
   if (track === 'sales') {
     return buildSalesRounds(blueprints, roleSignals)
   }
@@ -283,13 +312,43 @@ async function buildRoundsFromBlueprints(blueprints: any[], roleSignals: any, tr
   const rounds = []
 
   for (const [index, blueprint] of blueprints.entries()) {
-    const prompt = await generatePromptFromBlueprint(blueprint, roleSignals)
+    const fallbackTemplate = fallbackTemplates?.[index] || null
+    const fallbackPrompt = fallbackTemplate?.prompt || null
     const roundType = mapFormatToRoundType(blueprint.format)
+
+    let prompt: string
+    let mcqOptions: any[] | undefined
+    let extraConfig: Record<string, any> = {}
+
+    if (blueprint.format === 'agentic' || blueprint.format === 'voice-realtime') {
+      // Agentic and voice-realtime rounds have structured configs (agents, channels, personas)
+      // that can't be AI-generated — always use the template
+      if (fallbackTemplate) {
+        prompt = fallbackTemplate.prompt
+        extraConfig = { ...fallbackTemplate.config }
+      } else {
+        prompt = await generatePromptFromBlueprint(blueprint, roleSignals, fallbackPrompt)
+      }
+    } else if (blueprint.format === 'mcq') {
+      // MCQ rounds need structured options — generate via AI or use fallback
+      const mcqResult = await generateMCQFromBlueprint(blueprint, roleSignals, fallbackTemplate)
+      prompt = mcqResult.prompt
+      mcqOptions = mcqResult.options
+    } else {
+      prompt = await generatePromptFromBlueprint(blueprint, roleSignals, fallbackPrompt)
+    }
+
+    // Carry over template config for specific round types
+    if (roundType === 'code' && fallbackTemplate?.config) {
+      if (fallbackTemplate.config.languages) extraConfig.languages = fallbackTemplate.config.languages
+      if (fallbackTemplate.config.evaluation_focus) extraConfig.evaluation_focus = fallbackTemplate.config.evaluation_focus
+      if (fallbackTemplate.config.starter_code) extraConfig.starter_code = fallbackTemplate.config.starter_code
+    }
 
     rounds.push({
       round_number: index + 1,
       round_type: roundType,
-      title: `${blueprint.competency} (${blueprint.format})`,
+      title: fallbackTemplate?.title || `${blueprint.competency} (${blueprint.format})`,
       prompt,
       duration_minutes: blueprint.time_limit_minutes || 10,
       status: 'pending',
@@ -301,7 +360,9 @@ async function buildRoundsFromBlueprints(blueprints: any[], roleSignals: any, tr
         scoring_rubric: blueprint.scoring_rubric,
         red_flags: blueprint.red_flags,
         anti_cheat_constraints: blueprint.anti_cheat_constraints,
-        evidence_requirements: blueprint.evidence_requirements
+        evidence_requirements: blueprint.evidence_requirements,
+        ...(mcqOptions ? { options: mcqOptions } : {}),
+        ...extraConfig,
       }
     })
   }
@@ -316,6 +377,14 @@ function mapFormatToRoundType(format: string) {
       return 'code'
     case 'mcq':
       return 'mcq'
+    case 'email':
+      return 'email'
+    case 'voice-realtime':
+      return 'voice-realtime'
+    case 'voice':
+      return 'voice'
+    case 'agentic':
+      return 'agentic'
     case 'ranking':
       return 'text'
     case 'scenario':
@@ -352,6 +421,12 @@ function getRoleSuccessCriteria(track: string): string {
 
 function buildFallbackRounds(track: string, role: string, level?: string) {
   switch (track) {
+    case 'sales':
+      return buildSalesFallbackRounds()
+    case 'marketing':
+      return buildMarketingFallbackRounds()
+    case 'HR':
+      return buildHRFallbackRounds(level)
     case 'fullstack':
       return buildFullstackFallbackRounds(role)
     case 'agentic_eng':
@@ -375,6 +450,158 @@ function buildFallbackRounds(track: string, role: string, level?: string) {
         }
       ]
   }
+}
+
+function buildSalesFallbackRounds() {
+  return [
+    {
+      round_number: 1,
+      round_type: 'voice-realtime' as const,
+      title: 'Round 1: Live Voice Call with AI Prospect',
+      prompt: 'Conduct a live voice discovery call with an AI prospect. Ask discovery questions, handle objections, demonstrate value, and close for next steps.',
+      duration_minutes: 12,
+      status: 'pending',
+      config: {
+        competency: 'Discovery & Qualification',
+        initial_difficulty: 3,
+        voice: 'sage',
+        persona: 'prospect_with_objections',
+        scoring_rubric: {
+          dimensions: [
+            { name: 'discovery_quality', description: 'Quality and depth of discovery questions', maxScore: 20 },
+            { name: 'clarity_and_confidence', description: 'Clear, confident communication', maxScore: 20 },
+            { name: 'objection_handling', description: 'Handling of prospect objections', maxScore: 20 },
+            { name: 'honesty_about_constraints', description: 'Honesty about constraints and limitations', maxScore: 20 },
+            { name: 'closing_next_step', description: 'Professional closing and next steps', maxScore: 20 }
+          ]
+        }
+      }
+    },
+    {
+      round_number: 2,
+      round_type: 'email' as const,
+      title: 'Round 2: Negotiation via Email Thread',
+      prompt: 'Respond to the prospect email asking for pricing concessions and timeline demands. Draft two responses; the second addresses a harder objection.',
+      duration_minutes: 15,
+      status: 'pending',
+      config: {
+        competency: 'Negotiation & Closing',
+        thread_depth: 2,
+        scoring_rubric: {
+          dimensions: [
+            { name: 'negotiation_posture', description: 'Firmness and collaboration balance', maxScore: 20 },
+            { name: 'clarity_and_professionalism', description: 'Clear, professional tone', maxScore: 20 },
+            { name: 'handling_rejection', description: 'Response to pushback', maxScore: 20 },
+            { name: 'protecting_margin_and_scope', description: 'Protecting pricing and scope', maxScore: 20 },
+            { name: 'realistic_commitments', description: 'Realistic promises and timelines', maxScore: 20 }
+          ]
+        }
+      }
+    },
+    {
+      round_number: 3,
+      round_type: 'text' as const,
+      title: 'Round 3: Follow-up Discipline',
+      prompt: 'Write a clean internal handoff note summarizing what was learned, next steps, and risks.',
+      duration_minutes: 5,
+      status: 'pending',
+      config: { optional: true }
+    }
+  ]
+}
+
+function buildMarketingFallbackRounds() {
+  return [
+    {
+      round_number: 1,
+      round_type: 'text' as const,
+      title: 'Round 1: Campaign Design Under Constraints',
+      prompt: 'Scenario: New product capability, limited credibility, need qualified demos. Provide: ICP definition, message pillars, 2-week experiment plan, channels + cadence, and metrics that matter.',
+      duration_minutes: 14,
+      status: 'pending',
+      config: {
+        competency: 'Campaign Strategy',
+        scoring_rubric: {
+          dimensions: [
+            { name: 'clarity_and_positioning', description: 'Clarity of positioning and narrative', maxScore: 25 },
+            { name: 'experiment_discipline', description: 'Quality of experiment plan and constraints', maxScore: 25 },
+            { name: 'measurability', description: 'Metrics and success criteria', maxScore: 25 },
+            { name: 'credibility_proof', description: 'Credibility and proof strategy', maxScore: 25 }
+          ]
+        }
+      }
+    },
+    {
+      round_number: 2,
+      round_type: 'text' as const,
+      title: 'Round 2: Content + Distribution Workflow',
+      prompt: 'Design an AI-assisted content ops pipeline: research → outline → draft → QA → distribution → learnings. Include quality control and brand consistency checks.',
+      duration_minutes: 11,
+      status: 'pending',
+      config: {
+        competency: 'Content Operations',
+        scoring_rubric: {
+          dimensions: [
+            { name: 'system_thinking', description: 'End-to-end workflow design', maxScore: 34 },
+            { name: 'quality_gates', description: 'Quality control and brand consistency', maxScore: 33 },
+            { name: 'scale_without_noise', description: 'Scaling output while maintaining signal', maxScore: 33 }
+          ]
+        }
+      }
+    },
+    {
+      round_number: 3,
+      round_type: 'text' as const,
+      title: 'Round 3: Crisis Response',
+      prompt: 'Scenario: Backlash / negative comment thread. Provide a response and containment plan.',
+      duration_minutes: 6,
+      status: 'pending',
+      config: { optional: true }
+    }
+  ]
+}
+
+function buildHRFallbackRounds(level?: string) {
+  const levelLabel = typeof level === 'string' ? level.toLowerCase() : 'junior'
+  return [
+    {
+      round_number: 1,
+      round_type: 'text' as const,
+      title: 'Round 1: Sensitive Employee Query Response',
+      prompt: 'Scenario: A manager asks you (People Ops) to share details about another employee\'s recent performance issues and health-related leave. Draft a response that is discreet, policy-aware, and supportive while still helping the manager move forward.',
+      duration_minutes: 9,
+      status: 'pending',
+      config: {
+        competency: 'Confidentiality & Policy Judgment',
+        scoring_rubric: {
+          dimensions: [
+            { name: 'confidentiality_and_policy', description: 'Protects sensitive information and follows policy', maxScore: 25 },
+            { name: 'clarity_and_tone', description: 'Clear, professional, and empathetic communication', maxScore: 25 },
+            { name: 'actionability', description: 'Provides next steps and support', maxScore: 25 },
+            { name: 'judgment_under_uncertainty', description: 'Good judgment for the role', maxScore: 25 }
+          ]
+        }
+      }
+    },
+    {
+      round_number: 2,
+      round_type: 'text' as const,
+      title: 'Round 2: Onboarding Checklist + Cadence',
+      prompt: `You are onboarding a ${levelLabel} new hire for a remote team. Create a structured onboarding checklist and a 30/60/90-day cadence plan. Include owners, timing, and follow-ups for each item.`,
+      duration_minutes: 11,
+      status: 'pending',
+      config: {
+        competency: 'Onboarding Design',
+        scoring_rubric: {
+          dimensions: [
+            { name: 'structure_and_completeness', description: 'Checklist covers key onboarding needs', maxScore: 34 },
+            { name: 'cadence_and_ownership', description: 'Clear timing and ownership', maxScore: 33 },
+            { name: 'practicality_for_junior_level', description: 'Realistic plan for the hire level', maxScore: 33 }
+          ]
+        }
+      }
+    }
+  ]
 }
 
 function buildFullstackFallbackRounds(role: string) {
@@ -616,10 +843,93 @@ function buildImplementationFallbackRounds(role: string) {
     },
     {
       round_number: 2,
-      round_type: 'text' as const,
-      title: 'Round 2: Stakeholder Communication',
+      round_type: 'agentic' as const,
+      title: 'Round 2: Technical Integration & Internal Alignment',
       prompt:
-        'The client from Round 1 emails you 3 weeks into implementation: "The AI is giving wrong answers 20% of the time ' +
+        'A customer (VP of Engineering at DataFlow Inc.) is asking detailed questions about API integration, authentication, ' +
+        'and data migration. You have access to two channels:\n\n' +
+        '• Customer Chat — Respond to the customer directly with accurate, professional answers\n' +
+        '• Internal Team — Consult your Solutions Architect (Alex Chen) and Product Director (Sam Patel) for technical details and roadmap info\n\n' +
+        'Extract the right information from your internal team, then relay it clearly to the customer. ' +
+        'Set realistic expectations, identify risks, and avoid overpromising.',
+      duration_minutes: 16,
+      status: 'pending',
+      config: {
+        competency: 'Cross-functional Coordination',
+        difficulty: 'L2',
+        format: 'agentic',
+        agents: {
+          customer: {
+            name: 'Jordan Rivera',
+            role: 'VP of Engineering',
+            company: 'DataFlow Inc.',
+            context: 'Mid-market SaaS, 50 engineers, migrating from legacy system to microservices',
+            behavior: 'Technical, detail-oriented, asks about API rate limits, auth, data migration, error handling'
+          },
+          presales_engineer: {
+            name: 'Alex Chen',
+            role: 'Solutions Architect',
+            behavior: 'Knows API inside-out, sometimes adds caveats, may disagree with product on timelines'
+          },
+          product_owner: {
+            name: 'Sam Patel',
+            role: 'Product Director',
+            behavior: 'Knows roadmap, confirms/denies features, gives strategic context, sometimes vague on timelines'
+          }
+        },
+        scoring_rubric: {
+          dimensions: [
+            {
+              name: 'internal_coordination',
+              description: 'Quality of questions to internal team and synthesis of their answers',
+              maxScore: 25,
+              scoringCriteria: [
+                'Asks specific, targeted questions to the right team member',
+                'Synthesizes conflicting info from pre-sales and product',
+                'Does not relay raw internal discussion to customer'
+              ]
+            },
+            {
+              name: 'technical_comprehension',
+              description: 'Accuracy of technical details relayed to customer',
+              maxScore: 25,
+              scoringCriteria: [
+                'Correctly conveys API limits, auth options, migration details',
+                'Does not invent capabilities or misstate specifications',
+                'Translates technical jargon appropriately for customer'
+              ]
+            },
+            {
+              name: 'customer_communication',
+              description: 'Professional, clear, timely responses to customer',
+              maxScore: 25,
+              scoringCriteria: [
+                'Responds to all customer questions',
+                'Maintains professional and confident tone',
+                'Structures answers clearly (not rambling or vague)'
+              ]
+            },
+            {
+              name: 'risk_identification',
+              description: 'Identifies gaps, sets realistic expectations, flags risks',
+              maxScore: 25,
+              scoringCriteria: [
+                'Flags limitations and caveats proactively',
+                'Sets realistic timelines based on internal input',
+                'Does not overpromise on roadmap items or unconfirmed features'
+              ]
+            }
+          ]
+        },
+        evidence_requirements: { required: ['internal questions', 'customer responses', 'risk/limitation mentions'] }
+      }
+    },
+    {
+      round_number: 3,
+      round_type: 'text' as const,
+      title: 'Round 3: Stakeholder Communication',
+      prompt:
+        'The client from earlier emails you 3 weeks into implementation: "The AI is giving wrong answers 20% of the time ' +
         'and my team is losing trust. I\'m considering pulling the plug." ' +
         'Draft: (1) Your immediate response email to the client, (2) An internal action plan for your team, ' +
         '(3) A revised timeline with checkpoints to rebuild confidence.',
@@ -641,41 +951,139 @@ function buildImplementationFallbackRounds(role: string) {
   ]
 }
 
-async function generatePromptFromBlueprint(blueprint: any, roleSignals: any) {
-  const prompt = `You are generating a live interview question from a blueprint.
+async function generatePromptFromBlueprint(blueprint: any, roleSignals: any, fallbackPrompt?: string | null) {
+  // Build a concise context instead of dumping entire roleSignals
+  const context: Record<string, any> = {
+    role: roleSignals.jd_text,
+    track: blueprint.track,
+    competency: blueprint.competency,
+    difficulty: blueprint.difficulty,
+    format: blueprint.format,
+    time_limit_minutes: blueprint.time_limit_minutes,
+    scoring_dimensions: blueprint.scoring_rubric?.dimensions?.map((d: any) => d.name) || [],
+  }
+  if (roleSignals.candidate_context?.summary) {
+    context.candidate_background = roleSignals.candidate_context.summary
+  }
+  if (roleSignals.candidate_context?.skills) {
+    context.candidate_skills = roleSignals.candidate_context.skills.slice(0, 10)
+  }
+  if (roleSignals.example_questions?.length) {
+    context.example_questions = roleSignals.example_questions.slice(0, 2)
+  }
 
-Blueprint:
-${JSON.stringify(blueprint)}
+  const prompt = `Generate a specific, realistic interview question for a live assessment.
 
-Role signals:
-${JSON.stringify(roleSignals)}
+Context:
+${JSON.stringify(context, null, 2)}
 
-Requirements:
-- Provide a clear prompt and expected output format
-- Must be time-bound to ${blueprint.time_limit_minutes} minutes
-- Enforce anti-cheat constraints
-- Require reasoning (no trivia)
-- Align to competency and difficulty
+Rules:
+- The question must test "${blueprint.competency}" at difficulty "${blueprint.difficulty}"
+- It must be answerable in ${blueprint.time_limit_minutes} minutes
+- Use a realistic scenario (not abstract or theoretical)
+- Require structured reasoning, not trivia or memorization
+- The question should be detailed enough that the candidate knows exactly what to produce
+- Include clear deliverables the candidate must provide
 
-Return JSON:
-{"prompt":"...","expected_output":"..."}`
+Return a JSON object with exactly two fields:
+{"prompt": "the full question text for the candidate", "expected_output": "what a strong answer should contain"}`
 
   try {
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o',
+    const completion = await getAIClient().chat.completions.create({
+      model: mapModel('gpt-4o'),
       messages: [{ role: 'user', content: prompt }],
-      temperature: 0.4,
+      temperature: 0.5,
       response_format: { type: 'json_object' },
-      max_tokens: 500
+      max_tokens: 800
     })
 
-    const result = JSON.parse(completion.choices[0].message.content || '{}')
-    const promptText = result.prompt || 'Provide a structured response based on the blueprint constraints.'
+    const raw = completion.choices[0].message.content || '{}'
+    const result = JSON.parse(raw)
+    const promptText = result.prompt
+    if (!promptText || promptText.length < 50) {
+      console.warn('AI returned weak prompt, using fallback')
+      return fallbackPrompt || `Provide a response aligned to the competency "${blueprint.competency}" and format "${blueprint.format}". Include evidence and reasoning.`
+    }
     const expected = result.expected_output ? `\n\nExpected output:\n${result.expected_output}` : ''
     return `${promptText}${expected}`
-  } catch (error) {
-    console.error('Blueprint prompt generation error:', error)
+  } catch (error: any) {
+    console.error('Blueprint prompt generation error:', error?.message || error)
+    // Fall back to the hardcoded template prompt if available
+    if (fallbackPrompt) {
+      return fallbackPrompt
+    }
     return `Provide a response aligned to the competency "${blueprint.competency}" and format "${blueprint.format}". Include evidence and reasoning.`
+  }
+}
+
+async function generateMCQFromBlueprint(
+  blueprint: any,
+  roleSignals: any,
+  fallbackTemplate: Record<string, any> | null
+): Promise<{ prompt: string; options: any[] }> {
+  const context: Record<string, any> = {
+    role: roleSignals.jd_text,
+    competency: blueprint.competency,
+    difficulty: blueprint.difficulty,
+    time_limit_minutes: blueprint.time_limit_minutes,
+  }
+
+  const prompt = `Generate a multiple-choice code review question for a live interview.
+
+Context:
+${JSON.stringify(context, null, 2)}
+
+Rules:
+- Create a question that asks the candidate to review 4 code snippets
+- Exactly ONE snippet should be correct/safe for production
+- The other 3 should contain realistic, non-obvious bugs (e.g. SQL injection, off-by-one, race condition, auth bypass)
+- The candidate must identify the safe one and explain bugs in the others
+- Use real-world code patterns relevant to "${blueprint.competency}"
+
+IMPORTANT: The "prompt" field should ONLY contain the question instruction (1-2 sentences).
+Do NOT include the code snippets in the prompt — they will be displayed separately as selectable options.
+
+Return a JSON object:
+{
+  "prompt": "A short question instruction WITHOUT any code (e.g. 'Review the following code snippets. Identify which is safe for production and explain the vulnerabilities in the others.')",
+  "options": [
+    { "label": "Snippet A", "code": "the actual code", "description": "brief description of what it does" },
+    { "label": "Snippet B", "code": "the actual code", "description": "brief description", "correct": true },
+    { "label": "Snippet C", "code": "the actual code", "description": "brief description" },
+    { "label": "Snippet D", "code": "the actual code", "description": "brief description" }
+  ]
+}`
+
+  try {
+    const completion = await getAIClient().chat.completions.create({
+      model: mapModel('gpt-4o'),
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.5,
+      response_format: { type: 'json_object' },
+      max_tokens: 1200
+    })
+
+    const raw = completion.choices[0].message.content || '{}'
+    const result = JSON.parse(raw)
+
+    if (result.prompt && Array.isArray(result.options) && result.options.length >= 2) {
+      return { prompt: result.prompt, options: result.options }
+    }
+  } catch (error: any) {
+    console.error('MCQ generation error:', error?.message || error)
+  }
+
+  // Fallback: use template prompt and options
+  if (fallbackTemplate) {
+    return {
+      prompt: fallbackTemplate.prompt || `Review the code snippets and identify which is safe for production.`,
+      options: fallbackTemplate.config?.options || []
+    }
+  }
+
+  return {
+    prompt: `Review the code snippets for "${blueprint.competency}". Identify the safe one and explain bugs in the others.`,
+    options: []
   }
 }
 
@@ -758,14 +1166,24 @@ function pickRandom(list: any) {
 }
 
 async function buildSalesRounds(blueprints: any[], roleSignals: any) {
+  // Use voice-realtime for sales with ElevenLabs integration
+  // NOTE: voice-realtime rounds always use template prompt to stay consistent
+  // with ElevenLabs persona loaded from the personas table
+  const voiceDifficulty = roleSignals?.voice_difficulty ?? 3
+
   const defaults = [
     {
-      title: 'Round 1: Live Persona Sell',
-      round_type: 'voice' as const,
+      title: 'Round 1: Live Voice Call with AI Prospect',
+      round_type: 'voice-realtime' as const,
       duration_minutes: 12,
       prompt:
-        'Conduct a discovery call with a prospect. Ask at least 5 discovery questions, quantify value, and handle objections professionally.',
+        'Conduct a live voice discovery call with an AI prospect. Ask discovery questions, handle objections, demonstrate value, and close for next steps.',
       config: {
+        persona_id: null,
+        scenario_id: null,
+        initial_difficulty: voiceDifficulty,
+        allow_curveballs: false,
+        voice: 'sage',
         persona: 'prospect_with_objections',
         required_questions: 5,
         required_objections: 3,
@@ -908,9 +1326,11 @@ async function buildSalesRounds(blueprints: any[], roleSignals: any) {
 
   for (const [index, fallback] of defaults.entries()) {
     const blueprint = blueprints[index]
-    const prompt = blueprint
-      ? await generatePromptFromBlueprint(blueprint, roleSignals)
-      : fallback.prompt
+    // voice-realtime rounds always use template prompt — the actual voice call
+    // persona comes from the personas table, so AI-generated prompts would mismatch
+    const prompt = (fallback.round_type === 'voice-realtime' || !blueprint)
+      ? fallback.prompt
+      : await generatePromptFromBlueprint(blueprint, roleSignals, fallback.prompt)
 
     rounds.push({
       round_number: index + 1,
@@ -1063,7 +1483,7 @@ async function buildMarketingRounds(blueprints: any[], roleSignals: any) {
   for (const [index, fallback] of defaults.entries()) {
     const blueprint = blueprints[index]
     const prompt = blueprint
-      ? await generatePromptFromBlueprint(blueprint, roleSignals)
+      ? await generatePromptFromBlueprint(blueprint, roleSignals, fallback.prompt)
       : fallback.prompt
 
     rounds.push({
@@ -1210,7 +1630,7 @@ async function buildPeopleOpsRounds(blueprints: any[], roleSignals: any, level?:
   for (const [index, fallback] of defaults.entries()) {
     const blueprint = blueprints[index]
     const prompt = blueprint
-      ? await generatePromptFromBlueprint(blueprint, roleSignals)
+      ? await generatePromptFromBlueprint(blueprint, roleSignals, fallback.prompt)
       : fallback.prompt
 
     rounds.push({

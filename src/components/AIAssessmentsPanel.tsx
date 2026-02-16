@@ -68,18 +68,18 @@ export function AIAssessmentsPanel({ sessionId }: { sessionId: string }) {
       case 'red_flag':
         return {
           icon: AlertCircle,
-          color: 'text-signal-700',
-          bg: 'bg-signal-50',
-          border: 'border-signal-200',
-          badge: 'signal'
+          color: 'text-red-700',
+          bg: 'bg-red-50',
+          border: 'border-red-200',
+          badgeVariant: 'destructive' as const
         }
       case 'concern':
         return {
           icon: Info,
-          color: 'text-caution-700',
-          bg: 'bg-caution-50',
-          border: 'border-caution-200',
-          badge: 'caution'
+          color: 'text-amber-700',
+          bg: 'bg-amber-50',
+          border: 'border-amber-200',
+          badgeVariant: 'outline' as const
         }
       default: // info
         return {
@@ -87,7 +87,7 @@ export function AIAssessmentsPanel({ sessionId }: { sessionId: string }) {
           color: 'text-emerald-700',
           bg: 'bg-emerald-50',
           border: 'border-emerald-200',
-          badge: 'emerald'
+          badgeVariant: 'secondary' as const
         }
     }
   }
@@ -100,32 +100,32 @@ export function AIAssessmentsPanel({ sessionId }: { sessionId: string }) {
   }, {} as Record<string, AIAssessment[]>)
 
   return (
-    <Card className="bg-white/90">
+    <Card className="bg-card/90">
       <CardHeader>
         <div className="flex items-center justify-between">
           <h3 className="text-base font-semibold">AI Observations</h3>
-          <Badge tone="sky">Live</Badge>
+          <Badge variant="secondary">Live</Badge>
         </div>
-        <p className="text-xs text-ink-500">
+        <p className="text-xs text-muted-foreground">
           Real-time performance analysis
         </p>
       </CardHeader>
       <CardContent className="max-h-96 space-y-3 overflow-y-auto">
         {loading && (
-          <div className="flex items-center justify-center py-8 text-sm text-ink-500">
+          <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
             Loading assessments...
           </div>
         )}
 
         {!loading && assessments.length === 0 && (
-          <div className="rounded-2xl bg-ink-50 px-4 py-8 text-center text-sm text-ink-500">
+          <div className="rounded-2xl bg-muted px-4 py-8 text-center text-sm text-muted-foreground">
             AI observations will appear here during the call
           </div>
         )}
 
         {Object.entries(groupedAssessments).map(([dimension, items]) => (
           <div key={dimension} className="space-y-2">
-            <h4 className="text-xs font-semibold uppercase tracking-wide text-ink-600">
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               {dimension.replace(/_/g, ' ')}
             </h4>
             {items.slice(0, 3).map((assessment) => {
@@ -139,8 +139,8 @@ export function AIAssessmentsPanel({ sessionId }: { sessionId: string }) {
                 >
                   <Icon className={`mt-0.5 h-4 w-4 flex-shrink-0 ${config.color}`} />
                   <div className="flex-1">
-                    <p className="text-sm text-ink-800">{assessment.observation}</p>
-                    <p className="mt-1 text-xs text-ink-500">
+                    <p className="text-sm text-foreground">{assessment.observation}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
                       {new Date(assessment.timestamp).toLocaleTimeString()}
                     </p>
                   </div>
@@ -152,14 +152,14 @@ export function AIAssessmentsPanel({ sessionId }: { sessionId: string }) {
 
         {/* Summary Stats */}
         {assessments.length > 0 && (
-          <div className="mt-4 flex gap-2 border-t border-ink-100 pt-3">
-            <Badge tone="signal">
+          <div className="mt-4 flex gap-2 border-t pt-3">
+            <Badge variant="secondary">
               {assessments.filter(a => a.severity === 'info').length} Positive
             </Badge>
-            <Badge tone="sky">
+            <Badge variant="outline">
               {assessments.filter(a => a.severity === 'concern').length} Concerns
             </Badge>
-            <Badge tone="signal">
+            <Badge variant="destructive">
               {assessments.filter(a => a.severity === 'red_flag').length} Red Flags
             </Badge>
           </div>

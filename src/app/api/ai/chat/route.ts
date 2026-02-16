@@ -3,14 +3,7 @@ import OpenAI from 'openai'
 import { supabaseAdmin } from '@/lib/supabase/server'
 import { SALES_SIDEKICK_POLICY, enforceSidekickPolicy } from '@/lib/ai/sidekick-policy'
 import { decryptModelApiKey } from '@/lib/ai/model-registry-secrets'
-
-function getDefaultOpenAIKey() {
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) {
-    throw new Error('OPENAI_API_KEY is not configured')
-  }
-  return apiKey
-}
+import { getAIClient, mapModel } from '@/lib/ai/client'
 
 export async function POST(request: Request) {
   try {
@@ -53,9 +46,10 @@ export async function POST(request: Request) {
     const requestedModelKey = typeof model_key === 'string' && model_key.trim() ? model_key.trim() : null
     const requestedPurpose = typeof purpose === 'string' && purpose.trim() ? purpose.trim() : 'candidate_sidekick'
 
-    let effectiveModel = requestedModelKey || 'gpt-4o'
+    let effectiveModel = requestedModelKey || mapModel('gpt-4o')
+    let useRegistryClient = false
     let baseURL: string | undefined = undefined
-    let apiKey: string = getDefaultOpenAIKey()
+    let apiKey: string = ''
 
     if (requestedModelKey) {
       const { data: registryRow, error: registryError } = await supabaseAdmin
@@ -70,10 +64,12 @@ export async function POST(request: Request) {
 
       if (registryRow?.edgeadmin_endpoint) {
         baseURL = registryRow.edgeadmin_endpoint
+        useRegistryClient = true
       }
 
       if (registryRow?.api_key_ciphertext) {
         apiKey = decryptModelApiKey(registryRow.api_key_ciphertext)
+        useRegistryClient = true
       }
 
       if (registryRow?.model_key) {
@@ -81,7 +77,8 @@ export async function POST(request: Request) {
       }
     }
 
-    const openaiClient = new OpenAI({ apiKey, baseURL })
+    // Use model registry client if custom endpoint/key found, otherwise use default AI client
+    const openaiClient = useRegistryClient ? new OpenAI({ apiKey, baseURL }) : getAIClient()
 
     // Call OpenAI with policy-enforced system prompt
     const completion = await openaiClient.chat.completions.create({

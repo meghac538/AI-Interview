@@ -14,30 +14,8 @@ export async function POST(request: Request) {
       )
     }
 
-    // Insert artifact with content + round_number as proper columns
-    const { data: artifact, error } = await supabaseAdmin
-      .from('artifacts')
-      .insert({
-        session_id,
-        artifact_type,
-        url: '',
-        content,
-        round_number,
-        metadata: metadata || {}
-      })
-      .select()
-      .single()
-
-    if (error) throw error
-
-    // Log event (live_events table)
-    await supabaseAdmin.from('live_events').insert({
-      session_id,
-      event_type: 'artifact_submitted',
-      actor: 'candidate',
-      payload: { artifact_id: artifact.id, artifact_type, round_number }
-    })
-
+    // Create followup_answer event FIRST (before artifact insert which may fail
+    // if the artifacts table schema doesn't have all expected columns)
     if (artifact_type === 'followup_answer' && metadata?.question_id) {
       await supabaseAdmin.from('live_events').insert({
         session_id,
@@ -51,6 +29,60 @@ export async function POST(request: Request) {
         }
       })
     }
+
+    // Insert artifact using only columns present in all schema versions.
+    // Some deployments may lack 'url' and/or 'metadata' columns.
+    const baseRow: Record<string, unknown> = {
+      session_id,
+      artifact_type,
+      content,
+      round_number
+    }
+
+    let artifact: any = null
+    let insertError: any = null
+
+    // Try with all optional columns first, then progressively drop missing ones
+    const columnSets = [
+      { ...baseRow, url: '', metadata: metadata || {} },
+      { ...baseRow, url: '' },
+      { ...baseRow, metadata: metadata || {} },
+      baseRow
+    ]
+
+    for (const columns of columnSets) {
+      const { data, error } = await supabaseAdmin
+        .from('artifacts')
+        .insert(columns)
+        .select()
+        .single()
+
+      if (!error) {
+        artifact = data
+        insertError = null
+        break
+      }
+
+      if (error.code === 'PGRST204') {
+        // Column not found — try next set with fewer columns
+        insertError = error
+        continue
+      }
+
+      // Different error — stop trying
+      insertError = error
+      break
+    }
+
+    if (insertError) throw insertError
+
+    // Log event (live_events table)
+    await supabaseAdmin.from('live_events').insert({
+      session_id,
+      event_type: 'artifact_submitted',
+      actor: 'candidate',
+      payload: { artifact_id: artifact.id, artifact_type, round_number }
+    })
 
     // Only trigger scoring for final (non-draft) submissions like followup answers.
     // Draft auto-saves from TextResponseUI are scored at round completion time instead.

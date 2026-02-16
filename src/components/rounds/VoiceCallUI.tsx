@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { MessageSquare, Send, CheckCircle2, Circle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -35,11 +35,62 @@ export function VoiceCallUI({ round }: { round: Round }) {
     }
   }, [messages, loading])
 
+  // Auto-save on timer expiry: end chat and save transcript
+  const messagesRef = useRef(messages)
+  messagesRef.current = messages
+  const chatActiveRef = useRef(chatActive)
+  chatActiveRef.current = chatActive
+  const metricsRef = useRef(conversationMetrics)
+  metricsRef.current = conversationMetrics
+  const personaRef = useRef(personaState)
+  personaRef.current = personaState
+
+  const saveTranscript = useCallback(async () => {
+    if (!session?.id || messagesRef.current.length === 0) return
+    await fetch('/api/artifact/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: session.id,
+        round_number: round.round_number,
+        artifact_type: 'chat_transcript',
+        content: JSON.stringify(messagesRef.current),
+        metadata: {
+          conversation_complete: true,
+          auto_saved: true,
+          message_count: messagesRef.current.length,
+          metrics: metricsRef.current,
+          persona_state: personaRef.current
+        }
+      })
+    }).catch(() => {})
+  }, [session?.id, round.round_number])
+
+  useEffect(() => {
+    const handler = async (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      if (detail?.round_number !== round.round_number || !session?.id) return
+      if (chatActiveRef.current) {
+        setChatActive(false)
+      }
+      await saveTranscript()
+    }
+    window.addEventListener('round-auto-save', handler)
+    return () => window.removeEventListener('round-auto-save', handler)
+  }, [round.round_number, session?.id, saveTranscript])
+
   if (!session) return null
 
   const startChat = async () => {
     setChatActive(true)
     setLoading(true)
+
+    // Signal content to parent
+    window.dispatchEvent(
+      new CustomEvent('round-content-change', {
+        detail: { round_number: round.round_number, hasContent: true }
+      })
+    )
 
     try {
       const response = await fetch('/api/ai/prospect', {

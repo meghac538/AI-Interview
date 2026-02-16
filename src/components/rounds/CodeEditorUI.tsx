@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Textarea } from '@/components/ui/textarea'
-import { Select } from '@/components/ui/select'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useSession } from '@/contexts/SessionContext'
 import type { Round } from '@/lib/types/database'
 
@@ -62,6 +62,13 @@ export function CodeEditorUI({ round }: { round: Round }) {
   const handleCodeChange = (value: string) => {
     setCode(value)
     scheduleSave(value)
+
+    // Signal content to parent
+    window.dispatchEvent(
+      new CustomEvent('round-content-change', {
+        detail: { round_number: round.round_number, hasContent: value.trim().length > 0 && value.trim() !== initialCode.trim() }
+      })
+    )
   }
 
   const handleLanguageChange = (value: string) => {
@@ -69,25 +76,64 @@ export function CodeEditorUI({ round }: { round: Round }) {
     scheduleSave(code, value)
   }
 
+  // Auto-save on timer expiry: submit final non-draft code
+  const codeRef = useRef(code)
+  codeRef.current = code
+  const languageRef = useRef(language)
+  languageRef.current = language
+
+  useEffect(() => {
+    const handler = async (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      if (detail?.round_number !== round.round_number || !session?.id) return
+      if (!codeRef.current || codeRef.current === initialCode) return
+      if (saveTimer.current) clearTimeout(saveTimer.current)
+      await fetch('/api/artifact/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: session.id,
+          round_number: round.round_number,
+          artifact_type: 'code_response',
+          content: codeRef.current,
+          metadata: {
+            draft: false,
+            auto_saved: true,
+            language: languageRef.current,
+            line_count: codeRef.current.split(/\n/).length,
+            char_count: codeRef.current.length
+          }
+        })
+      }).catch(() => {})
+    }
+    window.addEventListener('round-auto-save', handler)
+    return () => window.removeEventListener('round-auto-save', handler)
+  }, [round.round_number, session?.id, initialCode])
+
   if (!session) return null
 
   return (
     <div className="space-y-4">
-      <div className="rounded-2xl border border-ink-100 bg-white px-4 py-3 text-sm text-ink-600">
+      <div className="rounded-2xl border bg-card px-4 py-3 text-sm text-muted-foreground">
         Use the editor below to write your solution. It will autosave as you type.
       </div>
 
       {languageOptions.length > 0 && (
         <div className="space-y-2">
-          <label className="text-xs font-semibold uppercase tracking-[0.2em] text-ink-500">
+          <label className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
             Language
           </label>
-          <Select value={language} onChange={(e) => handleLanguageChange(e.target.value)}>
-            {languageOptions.map((lang: string) => (
-              <option key={lang} value={lang}>
-                {lang}
-              </option>
-            ))}
+          <Select value={language} onValueChange={handleLanguageChange}>
+            <SelectTrigger>
+              <SelectValue placeholder="Select language" />
+            </SelectTrigger>
+            <SelectContent>
+              {languageOptions.map((lang: string) => (
+                <SelectItem key={lang} value={lang}>
+                  {lang}
+                </SelectItem>
+              ))}
+            </SelectContent>
           </Select>
         </div>
       )}
@@ -100,11 +146,11 @@ export function CodeEditorUI({ round }: { round: Round }) {
         className="min-h-[320px] font-mono text-xs"
       />
 
-      <div className="flex flex-wrap items-center justify-between rounded-2xl border border-ink-100 bg-white px-4 py-3 text-xs text-ink-500">
-        <span>Lines: {lineCount} • Characters: {code.length}</span>
+      <div className="flex flex-wrap items-center justify-between rounded-2xl border bg-card px-4 py-3 text-xs text-muted-foreground">
+        <span>Lines: {lineCount} &middot; Characters: {code.length}</span>
         <span>
           {isSaving
-            ? 'Saving…'
+            ? 'Saving...'
             : lastSavedAt
               ? `Saved at ${lastSavedAt.toLocaleTimeString()}`
               : 'Draft not saved yet'}
@@ -112,8 +158,8 @@ export function CodeEditorUI({ round }: { round: Round }) {
       </div>
 
       {round.config?.evaluation_focus && (
-        <div className="rounded-2xl border border-ink-100 bg-white px-4 py-3 text-sm text-ink-600">
-          <strong className="text-ink-800">Evaluation focus:</strong> {round.config.evaluation_focus}
+        <div className="rounded-2xl border bg-card px-4 py-3 text-sm text-muted-foreground">
+          <strong className="text-foreground">Evaluation focus:</strong> {round.config.evaluation_focus}
         </div>
       )}
     </div>

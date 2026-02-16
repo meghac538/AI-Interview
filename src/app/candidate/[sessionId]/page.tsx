@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Textarea } from "@/components/ui/textarea"
+import { cn } from "@/lib/utils"
 
 function AutoStopOverlay() {
   return (
@@ -34,18 +35,43 @@ function AutoStopOverlay() {
   )
 }
 
+function SessionCompleteOverlay({ candidateName, roleName }: { candidateName: string; roleName: string }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/95 backdrop-blur-sm">
+      <Card className="mx-4 max-w-lg text-center">
+        <CardHeader className="space-y-4 pb-2">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/10">
+            <CheckCircle2 className="h-8 w-8 text-emerald-500" />
+          </div>
+          <CardTitle className="text-2xl">Session Complete</CardTitle>
+          <CardDescription className="text-base">
+            Thank you, {candidateName}. Your assessment for <span className="font-medium text-foreground">{roleName}</span> has been submitted successfully.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4 pt-2">
+          <div className="rounded-xl border bg-muted/30 p-4 text-sm text-muted-foreground">
+            All your responses have been auto-saved and submitted for evaluation. You will receive feedback from the hiring team.
+          </div>
+          <p className="text-xs text-muted-foreground">You may now close this window.</p>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
 function CandidateWorkspace() {
   const { session, scopePackage, rounds, currentRound, events, loading } = useSession()
   const [timeLeft, setTimeLeft] = useState(0)
   const [endAt, setEndAt] = useState<number | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const autoSubmitFired = useRef(false)
+  const handleSubmitRef = useRef<(auto?: boolean) => Promise<void>>(() => Promise.resolve())
   const [followupAnswer, setFollowupAnswer] = useState('')
   const [followupGateRound, setFollowupGateRound] = useState<number | null>(null)
   const [forcedFollowupId, setForcedFollowupId] = useState<string | null>(null)
   const [forcedFollowupQuestion, setForcedFollowupQuestion] = useState<string | null>(null)
   const [serverFollowups, setServerFollowups] = useState<
-    Array<{ id: string; question: string; round_number?: number | null; source?: string }>
+    Array<{ id: string; question: string; round_number?: number | null; source?: string; answered?: boolean; answer?: string }>
   >([])
   const [localFollowups, setLocalFollowups] = useState<
     Array<{ question_id: string; question: string; round_number: number }>
@@ -53,9 +79,12 @@ function CandidateWorkspace() {
   const [localAnswers, setLocalAnswers] = useState<
     Array<{ question_id: string; question: string; answer: string; round_number: number }>
   >([])
+  const [submittingFollowup, setSubmittingFollowup] = useState(false)
 
   const followupThread = useMemo(() => {
     if (!currentRound) return []
+
+    // Single canonical source: followup_question events (covers both auto + manual)
     const questions = (events || [])
       .filter(
         (event) =>
@@ -64,27 +93,6 @@ function CandidateWorkspace() {
             Number(event.payload?.round_number) === currentRound.round_number)
       )
       .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-
-    const manualQuestions = (events || [])
-      .filter(
-        (event) =>
-          event.event_type === 'interviewer_action' &&
-          event.payload?.action_type === 'manual_followup' &&
-          event.payload?.followup
-      )
-      .map((event) => ({
-        payload: {
-          question_id: event.payload?.question_id,
-          question: event.payload?.followup,
-          round_number: event.payload?.round_number ?? event.payload?.target_round
-        },
-        created_at: event.created_at
-      }))
-      .filter(
-        (event) =>
-          event.payload?.round_number == null ||
-          Number(event.payload?.round_number) === currentRound.round_number
-      )
 
     const answers = (events || [])
       .filter(
@@ -95,6 +103,7 @@ function CandidateWorkspace() {
       )
       .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
 
+    // Optimistic local questions (shown before real-time events arrive)
     const localQuestions = localFollowups
       .filter((item) => Number(item.round_number) === currentRound.round_number)
       .map((item) => ({
@@ -105,6 +114,7 @@ function CandidateWorkspace() {
         created_at: new Date().toISOString()
       }))
 
+    // Server questions (loaded on mount for page reloads)
     const serverQuestions = serverFollowups
       .filter(
         (item) =>
@@ -124,43 +134,84 @@ function CandidateWorkspace() {
       .map((item) => ({
         payload: {
           question_id: item.question_id,
+          question: item.question,
           answer: item.answer
         },
         created_at: new Date().toISOString()
       }))
 
-    const allQuestions = [
-      ...localQuestions,
-      ...serverQuestions,
-      ...manualQuestions,
-      ...questions
-    ].reduce((acc, item) => {
+    // Deduplicate by question_id first, then by question text as fallback
+    // (multiple submissions of the same text create different UUIDs)
+    const seenIds = new Set<string>()
+    const seenTexts = new Set<string>()
+    const allQuestions: Array<{ payload?: Record<string, any>; created_at: string; [key: string]: any }> = []
+    for (const item of [...localQuestions, ...serverQuestions, ...questions]) {
       const id = item.payload?.question_id
-      if (!id || acc.some((q) => q.payload?.question_id === id)) return acc
-      acc.push(item)
-      return acc
-    }, [] as Array<{ payload?: Record<string, any>; created_at: string; [key: string]: any }>)
+      if (id && seenIds.has(id)) continue
+      const textKey = (item.payload?.question || '').toLowerCase().trim()
+      if (textKey && seenTexts.has(textKey)) continue
+      if (id) seenIds.add(id)
+      if (textKey) seenTexts.add(textKey)
+      allQuestions.push(item)
+    }
 
     const allAnswers = [...answers, ...localAnswerEvents]
 
-    const answerMap = new Map<string, string>()
+    // Dual answer matching: by question_id (UUID) AND by question text
+    // This handles UUID mismatches when dedup picks a different ID than what the answer references
+    const answerByIdMap = new Map<string, string>()
+    const answerByTextMap = new Map<string, string>()
     for (const answer of allAnswers) {
+      const ans = answer.payload?.answer || ''
       if (answer.payload?.question_id) {
-        answerMap.set(answer.payload.question_id, answer.payload?.answer || '')
+        answerByIdMap.set(answer.payload.question_id, ans)
+      }
+      const qText = String(answer.payload?.question || '').toLowerCase().trim()
+      if (qText) {
+        answerByTextMap.set(qText, ans)
       }
     }
 
-    return allQuestions.map((question) => ({
-      id: question.payload?.question_id,
-      question:
+    // Third fallback: server-side answered status from /api/followup/thread
+    const serverAnswerByIdMap = new Map<string, string>()
+    const serverAnswerByTextMap = new Map<string, string>()
+    for (const item of serverFollowups) {
+      if (item.answered) {
+        const ans = item.answer || ''
+        if (item.id) serverAnswerByIdMap.set(item.id, ans)
+        const sText = item.question.toLowerCase().trim()
+        if (sText) serverAnswerByTextMap.set(sText, ans)
+      }
+    }
+
+    return allQuestions.map((question) => {
+      const questionText =
         forcedFollowupId &&
         forcedFollowupQuestion &&
         question.payload?.question_id === forcedFollowupId
           ? forcedFollowupQuestion
-          : question.payload?.question || '',
-      answered: answerMap.has(question.payload?.question_id),
-      answer: answerMap.get(question.payload?.question_id)
-    }))
+          : question.payload?.question || ''
+      const textKey = questionText.toLowerCase().trim()
+      const qId = question.payload?.question_id
+      const answeredById = qId ? answerByIdMap.has(qId) : false
+      const answeredByText = answerByTextMap.has(textKey)
+      const answeredByServer = qId
+        ? serverAnswerByIdMap.has(qId) || serverAnswerByTextMap.has(textKey)
+        : serverAnswerByTextMap.has(textKey)
+      const isAnswered = answeredById || answeredByText || answeredByServer
+      return {
+        id: qId,
+        question: questionText,
+        answered: isAnswered,
+        answer: answeredById
+          ? answerByIdMap.get(qId!)
+          : answeredByText
+            ? answerByTextMap.get(textKey)
+            : answeredByServer
+              ? (serverAnswerByIdMap.get(qId!) || serverAnswerByTextMap.get(textKey))
+              : undefined
+      }
+    })
   }, [
     events,
     currentRound,
@@ -195,7 +246,7 @@ function CandidateWorkspace() {
     Boolean(followupGateRound && currentRound?.round_number === followupGateRound) ||
     hasPendingFollowups
 
-  // Load follow-up thread
+  // Load follow-up thread with periodic refresh
   useEffect(() => {
     if (!session?.id) return
     const loadThread = async () => {
@@ -216,7 +267,25 @@ function CandidateWorkspace() {
       }
     }
     loadThread()
+    const interval = setInterval(loadThread, 15000)
+    return () => clearInterval(interval)
   }, [session?.id])
+
+  // Prune localFollowups once the same question_id appears in real-time events
+  useEffect(() => {
+    if (!events || events.length === 0 || localFollowups.length === 0) return
+    const eventQuestionIds = new Set(
+      events
+        .filter((e) => e.event_type === 'followup_question')
+        .map((e) => e.payload?.question_id)
+        .filter(Boolean)
+    )
+    if (eventQuestionIds.size === 0) return
+    setLocalFollowups((prev) => {
+      const pruned = prev.filter((item) => !eventQuestionIds.has(item.question_id))
+      return pruned.length === prev.length ? prev : pruned
+    })
+  }, [events, localFollowups.length])
 
   // Auto-start first round
   useEffect(() => {
@@ -264,23 +333,23 @@ function CandidateWorkspace() {
     }
   }, [currentRound?.round_number, currentRound?.status, currentRound?.duration_minutes, currentRound?.started_at])
 
-  // Timer countdown
+  // Timer countdown — uses ref to always call the latest handleSubmit
   useEffect(() => {
     if (!endAt) return
 
     const tick = () => {
       const remaining = Math.max(0, Math.ceil((endAt - Date.now()) / 1000))
       setTimeLeft(remaining)
-      if (remaining === 0 && currentRound && !autoSubmitFired.current) {
+      if (remaining === 0 && !autoSubmitFired.current) {
         autoSubmitFired.current = true
-        void handleSubmit(true)
+        void handleSubmitRef.current(true)
       }
     }
 
     tick()
     const interval = setInterval(tick, 1000)
     return () => clearInterval(interval)
-  }, [endAt, currentRound?.round_number])
+  }, [endAt])
 
   const handleSubmit = async (auto = false) => {
     if (!session || !currentRound || submitting) return
@@ -288,6 +357,85 @@ function CandidateWorkspace() {
     // Auto-submit bypasses follow-up gating
     if (auto) {
       setSubmitting(true)
+
+      try {
+        // Dispatch auto-save event so round UIs can do a final non-draft save
+        window.dispatchEvent(
+          new CustomEvent('round-auto-save', {
+            detail: { session_id: session.id, round_number: currentRound.round_number }
+          })
+        )
+        // Brief wait for round UIs to fire their save requests
+        await new Promise((resolve) => setTimeout(resolve, 500))
+
+        const completeRes = await fetch("/api/round/complete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: session.id,
+            round_number: currentRound.round_number
+          })
+        })
+
+        if (!completeRes.ok) {
+          console.error('Round complete failed:', completeRes.status, await completeRes.text().catch(() => ''))
+        }
+
+        const nextRound = rounds.find((round) => round.round_number === currentRound.round_number + 1)
+        if (nextRound) {
+          const startRes = await fetch("/api/round/start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              session_id: session.id,
+              round_number: nextRound.round_number
+            })
+          })
+
+          if (startRes.ok) {
+            const startedRound = await startRes.json()
+            // Set the timer for the new round immediately (don't wait for real-time)
+            const durationMinutes = Number(startedRound?.duration_minutes || nextRound.duration_minutes || 0)
+            const startedAt = startedRound?.started_at
+              ? new Date(startedRound.started_at).getTime()
+              : Date.now()
+            const nextEndAt = startedAt + durationMinutes * 60 * 1000
+            setEndAt(nextEndAt)
+            setTimeLeft(Math.max(0, Math.ceil((nextEndAt - Date.now()) / 1000)))
+            autoSubmitFired.current = false
+          } else {
+            console.error('Round start failed:', startRes.status, await startRes.text().catch(() => ''))
+          }
+        }
+        // If no next round, session is marked 'completed' by the round/complete API
+      } catch (err) {
+        console.error('Auto-submit error:', err)
+        // Allow retry on failure
+        autoSubmitFired.current = false
+      } finally {
+        setSubmitting(false)
+        setTimeLeft(0)
+      }
+      return
+    }
+
+    // Show loading state immediately
+    setSubmitting(true)
+
+    try {
+      // Only gate on followups that already exist locally (from real-time events).
+      // Don't make blocking API calls that slow down submit.
+      if (hasPendingFollowups) return
+
+      // Auto-save candidate response before completing the round
+      window.dispatchEvent(
+        new CustomEvent('round-auto-save', {
+          detail: { session_id: session.id, round_number: currentRound.round_number }
+        })
+      )
+      await new Promise((resolve) => setTimeout(resolve, 500))
+
+      // Complete current round
       await fetch("/api/round/complete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -298,8 +446,9 @@ function CandidateWorkspace() {
       })
 
       const nextRound = rounds.find((round) => round.round_number === currentRound.round_number + 1)
+
       if (nextRound) {
-        await fetch("/api/round/start", {
+        const startRes = await fetch("/api/round/start", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -307,167 +456,66 @@ function CandidateWorkspace() {
             round_number: nextRound.round_number
           })
         })
-      }
 
+        if (startRes.ok) {
+          const startedRound = await startRes.json()
+          const durationMinutes = Number(startedRound?.duration_minutes || nextRound.duration_minutes || 0)
+          const startedAt = startedRound?.started_at
+            ? new Date(startedRound.started_at).getTime()
+            : Date.now()
+          const nextEndAt = startedAt + durationMinutes * 60 * 1000
+          setEndAt(nextEndAt)
+          setTimeLeft(Math.max(0, Math.ceil((nextEndAt - Date.now()) / 1000)))
+          autoSubmitFired.current = false
+        }
+      }
+      // If no next round, session is marked 'completed' by the round/complete API
+    } catch (err) {
+      console.error('Submit error:', err)
+    } finally {
       setSubmitting(false)
-      setTimeLeft(0)
-      return
     }
+  }
 
-    // Follow-up gating
-    if (hasPendingFollowups) return
+  // Keep ref in sync so the timer always calls the latest version
+  handleSubmitRef.current = handleSubmit
+
+  const submitFollowupAnswer = async () => {
+    if (!pendingFollowup || !session || !currentRound) return
+    if (!followupAnswer.trim() || submittingFollowup) return
+
+    setSubmittingFollowup(true)
+    const answerText = followupAnswer.trim()
 
     try {
-      const pendingResponse = await fetch('/api/followup/pending', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: session.id,
-          round_number: currentRound.round_number
-        })
-      })
-      if (pendingResponse.ok) {
-        const data = await pendingResponse.json()
-        if (data.pending && data.question_id && data.question) {
-          setLocalFollowups((prev) => {
-            if (prev.some((item) => item.question_id === data.question_id)) return prev
-            return [
-              ...prev,
-              {
-                question_id: data.question_id,
-                question: data.question,
-                round_number: currentRound.round_number
-              }
-            ]
-          })
-          setForcedFollowupId(data.question_id)
-          setForcedFollowupQuestion(data.question)
-          setFollowupGateRound(currentRound.round_number)
-          return
-        }
-      }
-    } catch {
-      // Best-effort check
-    }
-
-    try {
-      const threadResponse = await fetch('/api/followup/thread', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: session.id })
-      })
-      if (threadResponse.ok) {
-        const data = await threadResponse.json()
-        const thread = Array.isArray(data?.thread) ? data.thread : []
-        const unanswered = thread.filter(
-          (item: any) =>
-            (item.round_number == null ||
-              Number(item.round_number) === currentRound.round_number) &&
-            !item.answered
-        )
-        const manual = unanswered.find((item: any) => item.source === 'manual')
-        const pending = manual || unanswered[0]
-        if (pending?.id && pending?.question) {
-          setLocalFollowups((prev) => {
-            if (prev.some((item) => item.question_id === pending.id)) return prev
-            return [
-              ...prev,
-              {
-                question_id: pending.id,
-                question: pending.question,
-                round_number: currentRound.round_number
-              }
-            ]
-          })
-          setForcedFollowupId(pending.id)
-          setForcedFollowupQuestion(pending.question)
-          setFollowupGateRound(currentRound.round_number)
-          return
-        }
-      }
-    } catch {
-      // Best-effort thread check
-    }
-
-    if (followupThread.length > 0) {
-      setFollowupGateRound(currentRound.round_number)
-      return
-    }
-
-    const followupResponse = await fetch('/api/followup/generate', {
+    // Create followup_answer event via dedicated endpoint (bypasses artifacts table)
+    await fetch('/api/followup/answer', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         session_id: session.id,
-        round_number: currentRound.round_number
+        round_number: currentRound.round_number,
+        question_id: pendingFollowup.id,
+        question: pendingFollowup.question,
+        answer: answerText
       })
     })
 
-    if (followupResponse.ok) {
-      const data = await followupResponse.json()
-      if (data.generated) {
-        if (data.question_id && data.question) {
-          setLocalFollowups((prev) => {
-            if (prev.some((item) => item.question_id === data.question_id)) return prev
-            return [
-              ...prev,
-              {
-                question_id: data.question_id,
-                question: data.question,
-                round_number: currentRound.round_number
-              }
-            ]
-          })
-        }
-        return
-      }
-    }
-
-    // Complete current round
-    setSubmitting(true)
-    await fetch("/api/round/complete", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        session_id: session.id,
-        round_number: currentRound.round_number
-      })
-    })
-
-    const nextRound = rounds.find((round) => round.round_number === currentRound.round_number + 1)
-
-    if (nextRound) {
-      await fetch("/api/round/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          session_id: session.id,
-          round_number: nextRound.round_number
-        })
-      })
-    }
-
-    setSubmitting(false)
-  }
-
-  const submitFollowupAnswer = async () => {
-    if (!pendingFollowup || !session || !currentRound) return
-    if (!followupAnswer.trim()) return
-
-    await fetch('/api/artifact/submit', {
+    // Also try artifact submission (best-effort, may fail if schema is missing columns)
+    fetch('/api/artifact/submit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         session_id: session.id,
         round_number: currentRound.round_number,
         artifact_type: 'followup_answer',
-        content: followupAnswer.trim(),
+        content: answerText,
         metadata: {
           question_id: pendingFollowup.id,
           question: pendingFollowup.question
         }
       })
-    })
+    }).catch(() => {})
 
     if (pendingFollowup?.id && pendingFollowup.question) {
       setLocalAnswers((prev) => [
@@ -475,7 +523,7 @@ function CandidateWorkspace() {
         {
           question_id: pendingFollowup.id,
           question: pendingFollowup.question,
-          answer: followupAnswer.trim(),
+          answer: answerText,
           round_number: currentRound.round_number
         }
       ])
@@ -485,6 +533,9 @@ function CandidateWorkspace() {
       setForcedFollowupQuestion(null)
     }
     setFollowupAnswer('')
+    } finally {
+      setSubmittingFollowup(false)
+    }
   }
 
   const formattedTime = useMemo(() => {
@@ -523,11 +574,16 @@ function CandidateWorkspace() {
     return <AutoStopOverlay />
   }
 
-  const currentRoundNumber = currentRound.round_number || 1
-  const progress = ((currentRoundNumber - 1) / Math.max(rounds.length, 1)) * 100
-
   const candidateName = (session as any).candidate?.name || "Candidate"
   const roleName = (session as any).job?.title || "Assessment"
+
+  // Session completed — show completion screen
+  if (session.status === 'completed' || session.status === 'aborted') {
+    return <SessionCompleteOverlay candidateName={candidateName} roleName={roleName} />
+  }
+
+  const currentRoundNumber = currentRound.round_number || 1
+  const progress = ((currentRoundNumber - 1) / Math.max(rounds.length, 1)) * 100
   const roleTrack = (session as any).job?.track || "sales"
   const configuredRoleWidgets = (scopePackage as any)?.simulation_payloads?.role_widget_config?.lanes
   const configuredRoleFamily = (scopePackage as any)?.simulation_payloads?.role_widget_config?.role_family || roleTrack
@@ -661,8 +717,24 @@ function CandidateWorkspace() {
                         onChange={(e) => setFollowupAnswer(e.target.value)}
                       />
                       <div className="flex items-center gap-3">
-                        <Button size="sm" onClick={submitFollowupAnswer} disabled={!followupAnswer.trim()}>
-                          Submit follow-up
+                        <Button
+                          size="sm"
+                          onClick={submitFollowupAnswer}
+                          disabled={!followupAnswer.trim() || submittingFollowup}
+                          className={cn(
+                            (!followupAnswer.trim() && !submittingFollowup)
+                              ? 'opacity-40 cursor-not-allowed'
+                              : ''
+                          )}
+                        >
+                          {submittingFollowup ? (
+                            <>
+                              <span className="mr-2 inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                              Submitting...
+                            </>
+                          ) : (
+                            'Submit follow-up'
+                          )}
                         </Button>
                         <span className="text-xs text-muted-foreground">
                           You must answer follow-ups before proceeding.
@@ -685,9 +757,16 @@ function CandidateWorkspace() {
                   onClick={() => handleSubmit(false)}
                   disabled={submitting || hasPendingFollowups}
                   size="lg"
-                  className="min-w-44 rounded-2xl"
+                  className={cn(
+                    "min-w-44 rounded-2xl",
+                    hasPendingFollowups && !submitting && "opacity-40 cursor-not-allowed"
+                  )}
                 >
-                  <CheckCircle2 className="h-4 w-4" />
+                  {submitting ? (
+                    <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                  ) : (
+                    <CheckCircle2 className="h-4 w-4" />
+                  )}
                   {submitting ? "Submitting..." : "Submit & Next"}
                 </Button>
               </CardFooter>

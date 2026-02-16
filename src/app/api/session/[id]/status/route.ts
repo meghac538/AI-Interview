@@ -33,7 +33,7 @@ export async function POST(
       .from("interview_sessions")
       .update({ status: nextStatus })
       .eq("id", sessionId)
-      .select("id,status,updated_at")
+      .select("id,status")
       .single()
 
     if (updateError) throw updateError
