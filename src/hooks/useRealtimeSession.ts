@@ -122,7 +122,7 @@ export function useRealtimeSession(sessionId: string) {
                 updated[index] = nextScore
                 return updated
               }
-              return [...prev, nextScore]
+              return [nextScore, ...prev]
             })
           }
         }
