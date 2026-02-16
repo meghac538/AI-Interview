@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { AlertTriangle, CheckCircle2, Slash, ShieldAlert, TrendingUp, Loader2, Sparkles } from "lucide-react"
+import { AlertTriangle, CheckCircle2, Slash, ShieldAlert, TrendingUp, Loader2, Sparkles, Zap } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -195,14 +195,24 @@ export function GatePanel({
             const value = Number(dimension.score || 0)
             const isPending = dimension.status === 'pending'
             const percentage = (value / max) * 100
+            const isAdaptability = dimension.label === 'adaptability'
 
             return (
-              <div key={dimension.label} className="space-y-1.5">
+              <div
+                key={dimension.label}
+                className={`space-y-1.5 ${isAdaptability ? 'rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 -mx-1' : ''}`}
+              >
                 <div className="flex items-center justify-between text-sm gap-2">
                   <div className="flex items-center gap-2 flex-1 min-w-0">
+                    {isAdaptability && <Zap className="h-3 w-3 text-amber-500 shrink-0" />}
                     <span className="truncate" title={dimension.description}>
                       {dimension.label.replace(/_/g, " ")}
                     </span>
+                    {isAdaptability && (
+                      <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-amber-500/50 text-amber-600">
+                        Curveball
+                      </Badge>
+                    )}
                     {isPending && (
                       <Badge variant="secondary" className="text-[9px] px-1.5 py-0">
                         Pending

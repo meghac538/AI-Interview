@@ -3,7 +3,7 @@
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
-import { AlertTriangle, CheckCircle2, TrendingUp, TrendingDown, Minus, Clock, Award, FileText, XCircle } from "lucide-react"
+import { AlertTriangle, CheckCircle2, TrendingUp, TrendingDown, Minus, Clock, Award, FileText, XCircle, Zap } from "lucide-react"
 import { format } from "date-fns"
 
 interface DimensionScore {
@@ -12,6 +12,13 @@ interface DimensionScore {
   maxScore: number
   description?: string
   evidence?: Array<{ quote: string }>
+}
+
+interface CurveballEntry {
+  key?: string
+  title: string
+  detail: string
+  injected_at?: string
 }
 
 interface RoundScore {
@@ -30,6 +37,7 @@ interface RoundScore {
   confidence?: number
   startedAt?: string
   completedAt?: string
+  curveballs?: CurveballEntry[]
 }
 
 interface SessionData {
@@ -261,7 +269,7 @@ function RoundScoreCard({
             <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">
               Dimension Breakdown
             </p>
-            {round.dimensionScores.map((dimension) => {
+            {round.dimensionScores.filter(d => !(d.name === 'adaptability' && round.curveballs && round.curveballs.length > 0)).map((dimension) => {
               const percentage = (dimension.score / dimension.maxScore) * 100
               return (
                 <div key={dimension.name} className="space-y-1.5">
@@ -296,6 +304,68 @@ function RoundScoreCard({
         ) : (
           <div className="text-sm text-muted-foreground italic text-center py-4 border rounded-lg bg-muted/20">
             {round.status === 'completed' ? 'No dimension scores recorded' : 'Scoring pending'}
+          </div>
+        )}
+
+        {/* Curveball Handling */}
+        {round.curveballs && round.curveballs.length > 0 && (
+          <div className="space-y-3 pt-2 border-t">
+            <div className="flex items-center gap-2">
+              <Zap className="h-3.5 w-3.5 text-amber-500" />
+              <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">
+                Curveball Handling
+              </p>
+            </div>
+
+            {/* Adaptability score if present */}
+            {(() => {
+              const adaptability = round.dimensionScores.find(d => d.name === 'adaptability')
+              if (!adaptability) return null
+              const pct = (adaptability.score / adaptability.maxScore) * 100
+              return (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="font-semibold flex items-center gap-1.5">
+                      <Zap className="h-3 w-3 text-amber-500" />
+                      Adaptability Score
+                    </span>
+                    <span className="text-sm font-bold tabular-nums">
+                      {adaptability.score}/{adaptability.maxScore}
+                    </span>
+                  </div>
+                  <Progress value={pct} className="h-2" />
+                  {adaptability.description && (
+                    <p className="text-xs text-muted-foreground">{adaptability.description}</p>
+                  )}
+                  {showDetailedEvidence && adaptability.evidence && adaptability.evidence.length > 0 && (
+                    <div className="space-y-1 mt-1">
+                      {adaptability.evidence.map((ev, idx) => (
+                        <div
+                          key={idx}
+                          className="rounded bg-amber-500/10 px-2 py-1.5 text-xs italic border-l-2 border-amber-500/40"
+                        >
+                          &ldquo;{ev.quote}&rdquo;
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
+
+            {/* Curveball list */}
+            <div className="space-y-1.5">
+              <p className="text-xs text-muted-foreground">Constraints injected during this round:</p>
+              {round.curveballs.map((cb, idx) => (
+                <div key={idx} className="flex items-start gap-2 rounded border border-amber-500/20 bg-amber-500/5 px-2.5 py-1.5 text-xs">
+                  <Zap className="h-3 w-3 text-amber-500 mt-0.5 shrink-0" />
+                  <div>
+                    <span className="font-medium">{cb.title}</span>
+                    {cb.detail && <span className="text-muted-foreground"> — {cb.detail}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 

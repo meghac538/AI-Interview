@@ -91,6 +91,16 @@ export default function ScoreCardPage() {
               })
             : []
 
+          // Extract curveballs injected during this round
+          const curveballs = Array.isArray(round.config?.injected_curveballs)
+            ? round.config.injected_curveballs.map((c: any) => ({
+                key: c.key,
+                title: c.title || c.key || 'Constraint',
+                detail: c.detail || '',
+                injected_at: c.injected_at
+              }))
+            : []
+
           return {
             roundNumber: round.round_number,
             roundTitle: round.title,
@@ -102,7 +112,8 @@ export default function ScoreCardPage() {
             recommendation: roundScore?.recommendation,
             confidence: roundScore?.confidence,
             startedAt: round.started_at,
-            completedAt: round.completed_at
+            completedAt: round.completed_at,
+            curveballs: curveballs.length > 0 ? curveballs : undefined
           }
         })
 
