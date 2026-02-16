@@ -1398,30 +1398,6 @@ function InterviewerView() {
             </CardContent>
           </Card>
 
-          <Card className="xl:col-span-2">
-            <CardHeader>
-              <CardTitle className="text-base">Candidate Activity</CardTitle>
-              <CardDescription>
-                Live analytics from session events, scores, artifacts, and round progression.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {candidateActivityMetrics.map((metric) => {
-                const MetricIcon = metric.icon
-                return (
-                  <div key={metric.key} className="rounded-2xl border border-border/60 bg-background/35 px-4 py-3 backdrop-blur">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">{metric.label}</p>
-                      <MetricIcon className="h-4 w-4 text-primary" />
-                    </div>
-                    <p className="mt-2 text-2xl font-semibold tracking-tight">{metric.value}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">{metric.helper}</p>
-                  </div>
-                )
-              })}
-            </CardContent>
-          </Card>
-
           {autoStopTriggered && (
             <div className="rounded-lg border-2 border-destructive/40 bg-destructive/10 px-5 py-4 animate-pulse xl:col-span-2">
               <div className="flex items-center gap-3">
@@ -1435,39 +1411,6 @@ function InterviewerView() {
               </div>
             </div>
           )}
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Round Timeline</CardTitle>
-            </CardHeader>
-            <CardContent className="hide-scrollbar max-h-[360px] space-y-2 overflow-y-auto pr-1">
-              {roundTimeline.length === 0 && (
-                <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
-                  No rounds are loaded for this session.
-                </div>
-              )}
-              {roundTimeline.map((round) => {
-                const roundStatusVariant =
-                  round.status === 'active' ? 'default' : round.status === 'completed' ? 'secondary' : 'outline'
-
-                return (
-                  <div key={round.round_number} className="flex items-center justify-between gap-3 rounded-lg border p-3">
-                    <div>
-                      <p className="text-sm font-medium">
-                        Round {round.round_number}: {round.title}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {round.startedAt
-                          ? `${round.startedAt.toLocaleTimeString()} to ${round.endsAt?.toLocaleTimeString()}`
-                          : `Duration: ${round.durationMinutes} min`}
-                      </p>
-                    </div>
-                    <Badge variant={roundStatusVariant}>{round.status}</Badge>
-                  </div>
-                )
-              })}
-            </CardContent>
-          </Card>
 
           <Card className="xl:col-span-2">
             <CardHeader className="py-3">
@@ -2354,6 +2297,68 @@ function InterviewerView() {
                   </div>
                 </SheetContent>
           </Sheet>
+
+          <Card className="mt-3">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm">Candidate Activity</CardTitle>
+              <CardDescription className="text-xs">
+                Live metrics from events, scores, artifacts.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {candidateActivityMetrics.map((metric) => {
+                const MetricIcon = metric.icon
+                return (
+                  <div key={metric.key} className="rounded-xl border border-border/60 bg-background/35 px-3 py-2.5 backdrop-blur">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{metric.label}</p>
+                      <MetricIcon className="h-3.5 w-3.5 text-primary" />
+                    </div>
+                    <p className="mt-1 text-lg font-semibold tracking-tight">{metric.value}</p>
+                    <p className="text-[10px] text-muted-foreground">{metric.helper}</p>
+                  </div>
+                )
+              })}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm">Rounds</CardTitle>
+              <CardDescription className="text-xs">Round timeline</CardDescription>
+            </CardHeader>
+            <CardContent className="hide-scrollbar max-h-[320px] space-y-2 overflow-y-auto pr-1">
+              {roundTimeline.length === 0 && (
+                <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
+                  No rounds are loaded for this session.
+                </div>
+              )}
+              {roundTimeline.map((round) => {
+                const roundStatusVariant =
+                  round.status === 'active' ? 'default' : round.status === 'completed' ? 'secondary' : 'outline'
+
+                return (
+                  <div key={round.round_number} className="rounded-lg border bg-muted/20 p-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-xs font-medium">
+                          R{round.round_number}: {round.title}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {round.startedAt
+                            ? `${round.startedAt.toLocaleTimeString()} to ${round.endsAt?.toLocaleTimeString()}`
+                            : `${round.durationMinutes} min`}
+                        </p>
+                      </div>
+                      <Badge variant={roundStatusVariant} className="text-[10px]">
+                        {round.status}
+                      </Badge>
+                    </div>
+                  </div>
+                )
+              })}
+            </CardContent>
+          </Card>
         </aside>
         </div>
       </div>
