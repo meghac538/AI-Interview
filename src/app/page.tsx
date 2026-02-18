@@ -36,10 +36,10 @@ export default function HomePage() {
                 </Link>
               </Button>
               <Button asChild variant="outline">
-                <Link href="/interviewer">Interviewer Console</Link>
+                <Link href="/interviewer/login">Interviewer Console</Link>
               </Button>
               <Button asChild variant="outline">
-                <Link href="/admin">Admin Dashboard</Link>
+                <Link href="/admin/login">Admin Dashboard</Link>
               </Button>
               <Button asChild variant="outline">
                 <Link href="/about-oneorigin">About OneOrigin</Link>

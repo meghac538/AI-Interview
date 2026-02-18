@@ -187,6 +187,16 @@
       radial-gradient(700px 280px at 65% 88%, oklch(var(--chart-2) / 0.14), transparent 64%);
     animation: waveFloat 12s ease-in-out infinite alternate;
   }
+
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .hide-scrollbar::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
 }
 
 @keyframes waveFloat {
