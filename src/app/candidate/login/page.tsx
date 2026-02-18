@@ -76,8 +76,13 @@ function CandidateLoginContent() {
       }
 
       if (sessionId && !accessToken) {
-        void logMagicLinkOpen(sessionId)
-        router.replace(`/candidate/${sessionId}`)
+        const { data: existingSession } = await supabase.auth.getSession()
+        if (existingSession.session) {
+          void logMagicLinkOpen(sessionId)
+          router.replace(`/candidate/${sessionId}`)
+        } else {
+          setInfo("Waiting for secure one-time sign-in link. Please open the link sent by your hiring manager.")
+        }
         return
       }
 
@@ -151,6 +156,7 @@ function CandidateLoginContent() {
     if (!email.trim() || loading || resolvingLink) return
     setLoading(true)
     setError(null)
+    setInfo(null)
     try {
       const response = await fetch("/api/candidate/access", {
         method: "POST",
@@ -163,7 +169,19 @@ function CandidateLoginContent() {
         throw new Error(data.error || "Unable to locate your session")
       }
 
-      router.push(data.redirect_url)
+      const sessionId = data?.session_id
+      if (!sessionId) {
+        throw new Error("No active session found for this email.")
+      }
+
+      const redirectTo = `${window.location.origin}/candidate/login?session=${sessionId}`
+      const { error: otpError } = await supabase.auth.signInWithOtp({
+        email: email.trim().toLowerCase(),
+        options: { emailRedirectTo: redirectTo }
+      })
+
+      if (otpError) throw otpError
+      setInfo("Magic link sent. Open it to enter your live assessment session.")
     } catch (err: any) {
       setError(err.message)
     } finally {

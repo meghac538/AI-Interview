@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { AlertTriangle, BarChart3, BookOpenText, CheckCircle2, Clock, FileSearch, ListOrdered, MessageSquareText, ScrollText, Slash } from 'lucide-react'
+import { AlertTriangle, BarChart3, BookOpenText, CheckCircle2, Clock, FileSearch, ListOrdered, MessageSquareText, ScrollText, Slash, Zap } from 'lucide-react'
 import { useParams, useRouter } from 'next/navigation'
 import {
   ArrowLeft,
@@ -13,6 +13,7 @@ import {
   FileText,
   Link2,
   Loader2,
+  LogOut,
   Sparkles
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -36,6 +37,10 @@ import { AIAssessmentsPanel } from '@/components/AIAssessmentsPanel'
 import { useVoiceAnalysis } from '@/hooks/useVoiceAnalysis'
 import { SayMeter } from '@/components/voice/SayMeter'
 import { SuggestionsPanel } from '@/components/voice/SuggestionsPanel'
+import { authedFetch } from '@/lib/supabase/authed-fetch'
+import { resolveCurrentUserRole } from '@/lib/supabase/client-role'
+import { isInterviewerRole } from '@/lib/auth/roles'
+import { supabase } from '@/lib/supabase/client'
 
 type TranscriptEntry = {
   speaker: string
@@ -47,6 +52,25 @@ type ActionEntry = {
   action: string
   detail?: string
   time: string
+}
+
+type DeployableAgentConfig = {
+  id: string
+  name: string
+  description?: string | null
+  event_type: string
+  role_family?: string | null
+  http_method: string
+  is_active: boolean
+}
+
+type AgentDeploymentRun = {
+  id: string
+  status: string
+  deployment_name: string
+  response_status?: number | null
+  error_message?: string | null
+  created_at: string
 }
 
 // Analyze live transcript in real-time
@@ -549,6 +573,14 @@ function InterviewerView() {
   const [flagType, setFlagType] = useState<string>('custom')
   const [flagDescription, setFlagDescription] = useState('')
   const [flagSeverity, setFlagSeverity] = useState<'warning' | 'critical'>('warning')
+  const [authReady, setAuthReady] = useState(false)
+  const [authEmail, setAuthEmail] = useState<string | null>(null)
+  const [deploymentConfigs, setDeploymentConfigs] = useState<DeployableAgentConfig[]>([])
+  const [deploymentRuns, setDeploymentRuns] = useState<AgentDeploymentRun[]>([])
+  const [selectedDeploymentId, setSelectedDeploymentId] = useState<string>('')
+  const [deploymentInput, setDeploymentInput] = useState('{\n  \"notes\": \"\"\n}')
+  const [deployingAgent, setDeployingAgent] = useState(false)
+  const [deploymentError, setDeploymentError] = useState<string | null>(null)
 
   const voiceActiveRound = (rounds || []).find((round) => round.status === 'active')
   const isVoiceRealtimeActive = voiceActiveRound?.round_type === 'voice-realtime'
@@ -852,6 +884,41 @@ function InterviewerView() {
   // Derive role track even when session is temporarily null so hooks stay stable.
   const roleTrack = (session as any)?.job?.track || 'sales'
 
+  const deploymentConfigsForTrack = useMemo(() => {
+    return deploymentConfigs.filter((config) => {
+      const family = String(config.role_family || 'all').toLowerCase()
+      return family === 'all' || family === roleTrack.toLowerCase()
+    })
+  }, [deploymentConfigs, roleTrack])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const checkAccess = async () => {
+      const { email, role } = await resolveCurrentUserRole()
+      if (cancelled) return
+
+      if (!email) {
+        router.replace('/interviewer/login')
+        return
+      }
+
+      if (!isInterviewerRole(role)) {
+        router.replace('/interviewer/login?denied=1')
+        return
+      }
+
+      setAuthEmail(email)
+      setAuthReady(true)
+    }
+
+    void checkAccess()
+
+    return () => {
+      cancelled = true
+    }
+  }, [router])
+
   // Important: keep hooks unconditional. The session is null on initial render; returning early
   // before calling `useEffect` changes hook order once session loads, causing React warnings.
   useEffect(() => {
@@ -868,6 +935,29 @@ function InterviewerView() {
     const timeout = setTimeout(() => setActionNotice(null), 2600)
     return () => clearTimeout(timeout)
   }, [actionNotice])
+
+  useEffect(() => {
+    if (!session?.id || !authReady) return
+
+    const loadDeployments = async () => {
+      setDeploymentError(null)
+      const response = await authedFetch(`/api/interviewer/deployments?session_id=${session.id}`, {
+        cache: 'no-store'
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        setDeploymentError(data?.error || 'Failed to load deployment panel.')
+        return
+      }
+      setDeploymentConfigs(data?.configs || [])
+      setDeploymentRuns(data?.deployments || [])
+      if (Array.isArray(data?.configs) && data.configs.length > 0) {
+        setSelectedDeploymentId((current) => current || data.configs[0].id)
+      }
+    }
+
+    void loadDeployments()
+  }, [session?.id, authReady])
 
   const fetchResumePreview = async (sessionId: string) => {
     setResumePreviewState('loading')
@@ -903,6 +993,17 @@ function InterviewerView() {
     void fetchResumePreview(session.id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.id])
+
+  if (!authReady) {
+    return (
+      <main className="surface-grid flex min-h-screen items-center justify-center px-4 py-10">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Validating interviewer access...
+        </div>
+      </main>
+    )
+  }
 
   if (!session) return null
 
@@ -948,7 +1049,7 @@ function InterviewerView() {
     // Show immediate optimistic feedback
     setActionNotice({ kind: 'success', message: `Sending: ${action_type.replace(/_/g, ' ')}...` })
     try {
-      const response = await fetch('/api/interviewer/action', {
+      const response = await authedFetch('/api/interviewer/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -985,7 +1086,7 @@ function InterviewerView() {
 
     try {
       // Fire gate_decision event (non-blocking — don't wait for full round-trip)
-      const actionPromise = fetch('/api/interviewer/action', {
+      const actionPromise = authedFetch('/api/interviewer/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1006,7 +1107,7 @@ function InterviewerView() {
         // Fire both in parallel
         await Promise.all([
           actionPromise,
-          fetch(`/api/session/${session.id}/status`, {
+          authedFetch(`/api/session/${session.id}/status`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status: 'aborted', reason: 'interviewer_stop' })
@@ -1026,7 +1127,7 @@ function InterviewerView() {
         try {
           await actionPromise
           if (activeRound) {
-            await fetch('/api/round/complete', {
+            await authedFetch('/api/round/complete', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -1036,7 +1137,7 @@ function InterviewerView() {
             })
           }
           if (nextRound) {
-            await fetch('/api/round/start', {
+            await authedFetch('/api/round/start', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -1062,7 +1163,7 @@ function InterviewerView() {
     setSendLinkError(null)
 
     try {
-      const response = await fetch('/api/interviewer/send-link', {
+      const response = await authedFetch('/api/interviewer/send-link', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: session.id })
@@ -1096,7 +1197,7 @@ function InterviewerView() {
     setActionNotice({ kind: 'success', message: 'Ending round...' })
     // Fire both requests in parallel, don't block UI
     Promise.all([
-      fetch('/api/interviewer/action', {
+      authedFetch('/api/interviewer/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1105,7 +1206,7 @@ function InterviewerView() {
           payload: { round_number: activeRound.round_number }
         })
       }).catch(() => {}),
-      fetch('/api/round/complete', {
+      authedFetch('/api/round/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1242,7 +1343,7 @@ function InterviewerView() {
   const setSessionStatus = async (status: 'completed' | 'aborted', reason?: string) => {
     setSessionStatusLoading(status)
     try {
-      const response = await fetch(`/api/session/${session.id}/status`, {
+      const response = await authedFetch(`/api/session/${session.id}/status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status, reason: reason || null })
@@ -1259,6 +1360,56 @@ function InterviewerView() {
     } finally {
       setSessionStatusLoading(null)
     }
+  }
+
+  const deploySelectedAgent = async () => {
+    if (!selectedDeploymentId || !session?.id || deployingAgent) return
+    setDeployingAgent(true)
+    setDeploymentError(null)
+
+    try {
+      let parsedInput = {}
+      if (deploymentInput.trim()) {
+        parsedInput = JSON.parse(deploymentInput)
+      }
+
+      const response = await authedFetch('/api/interviewer/deployments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: session.id,
+          webhook_config_id: selectedDeploymentId,
+          input: parsedInput
+        })
+      })
+
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(data?.error || 'Deployment failed.')
+      }
+
+      const reload = await authedFetch(`/api/interviewer/deployments?session_id=${session.id}`, {
+        cache: 'no-store'
+      })
+      const reloadJson = await reload.json().catch(() => ({}))
+      if (reload.ok) {
+        setDeploymentRuns(reloadJson?.deployments || [])
+      }
+
+      setActionNotice({
+        kind: data?.ok ? 'success' : 'error',
+        message: data?.ok ? 'Agent flow deployed successfully.' : `Deployment ${data?.status || 'failed'}.`
+      })
+    } catch (error: any) {
+      setDeploymentError(error?.message || 'Failed to deploy selected agent flow.')
+    } finally {
+      setDeployingAgent(false)
+    }
+  }
+
+  const signOut = async () => {
+    await supabase.auth.signOut()
+    router.replace('/interviewer/login')
   }
 
   const resolvedResumeUrl = resumePreview?.signedUrl || resumeUrl
@@ -1291,6 +1442,9 @@ function InterviewerView() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {authEmail ? (
+              <span className="text-xs text-muted-foreground">{authEmail}</span>
+            ) : null}
             <Button
               size="sm"
               variant="secondary"
@@ -1312,6 +1466,10 @@ function InterviewerView() {
             <Button size="sm" variant="destructive" disabled={sessionStatusLoading !== null} onClick={() => void setSessionStatus('aborted', 'interviewer_abort')}>
               {sessionStatusLoading === 'aborted' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {sessionStatusLoading === 'aborted' ? 'Aborting...' : 'Abort Session'}
+            </Button>
+            <Button size="sm" variant="outline" onClick={signOut}>
+              <LogOut className="h-4 w-4" />
+              Sign out
             </Button>
             <ThemeToggle />
           </div>
@@ -2011,7 +2169,7 @@ function InterviewerView() {
                     size="sm"
                     onClick={async () => {
                       try {
-                        const response = await fetch('/api/score/trigger', {
+                        const response = await authedFetch('/api/score/trigger', {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({
@@ -2083,6 +2241,88 @@ function InterviewerView() {
               {widgetConfigError && (
                 <p className="text-xs text-destructive">{widgetConfigError}</p>
               )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Agent Deployment Panel</CardTitle>
+              <CardDescription>
+                Deploy admin-configured webhook/API flows (n8n compatible) into this live session.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-2">
+                <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Flow</p>
+                <Select value={selectedDeploymentId} onValueChange={setSelectedDeploymentId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select configured deployment flow" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {deploymentConfigsForTrack.length === 0 ? (
+                      <SelectItem value="none" disabled>
+                        No flows for this role track
+                      </SelectItem>
+                    ) : (
+                      deploymentConfigsForTrack.map((config) => (
+                        <SelectItem key={config.id} value={config.id}>
+                          {config.name} ({config.http_method})
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Input JSON</p>
+                <Textarea
+                  rows={5}
+                  className="font-mono text-xs"
+                  value={deploymentInput}
+                  onChange={(event) => setDeploymentInput(event.target.value)}
+                  placeholder='{"notes":"optional runtime context"}'
+                />
+              </div>
+
+              <Button
+                size="sm"
+                className="w-full"
+                disabled={!selectedDeploymentId || deployingAgent || selectedDeploymentId === 'none'}
+                onClick={deploySelectedAgent}
+              >
+                {deployingAgent ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
+                {deployingAgent ? 'Deploying...' : 'Deploy Flow To Session'}
+              </Button>
+
+              {deploymentError ? (
+                <p className="text-xs text-destructive">{deploymentError}</p>
+              ) : null}
+
+              <div className="rounded-xl border p-3">
+                <p className="mb-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Recent Deployments</p>
+                <div className="hide-scrollbar max-h-[180px] space-y-2 overflow-y-auto pr-1">
+                  {deploymentRuns.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No deployments for this session yet.</p>
+                  ) : (
+                    deploymentRuns.map((run) => (
+                      <div key={run.id} className="rounded-lg border bg-muted/20 px-3 py-2 text-xs">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium">{run.deployment_name}</span>
+                          <Badge variant={run.status === 'success' ? 'secondary' : 'outline'}>{run.status}</Badge>
+                        </div>
+                        <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground">
+                          <span>{new Date(run.created_at).toLocaleTimeString()}</span>
+                          <span>HTTP {run.response_status || '-'}</span>
+                        </div>
+                        {run.error_message ? (
+                          <p className="mt-1 text-[10px] text-destructive">{run.error_message}</p>
+                        ) : null}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
             </CardContent>
           </Card>
 

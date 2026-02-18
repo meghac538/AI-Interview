@@ -4,6 +4,7 @@ import crypto from 'crypto'
 import { fetchScopePackage, getActiveRoundNumber, emitRedFlag, forceStopSession } from '@/lib/db/helpers'
 import { getCurveballByKey, getPersonasForTrack, CURVEBALL_LIBRARY } from '@/lib/constants/curveball-library'
 import { getAIClient, mapModel } from '@/lib/ai/client'
+import { requireInterviewer } from '@/lib/supabase/require-role'
 
 // Round types where the AI handles curveballs in conversation — no need to contextualize
 const CONVERSATIONAL_ROUNDS = new Set(['voice', 'voice-realtime', 'email', 'agentic'])
@@ -25,6 +26,9 @@ function pickNextValue<T>(sequence: readonly T[], current: T | null) {
 
 export async function POST(request: Request) {
   try {
+    const gate = await requireInterviewer(request)
+    if (!gate.ok) return gate.response
+
     const { session_id, action_type, payload } = await request.json()
 
     if (!session_id || !action_type) {

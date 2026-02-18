@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
-import { Bot, Plus, ShieldCheck, Activity, ArrowLeft, Eye, EyeOff, Lock } from "lucide-react"
+import { ArrowLeft, Bot, Eye, EyeOff, Loader2, Plus, ShieldCheck, Activity, LogOut, Zap } from "lucide-react"
+import { useRouter } from "next/navigation"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -12,7 +13,11 @@ import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { Textarea } from "@/components/ui/textarea"
 import { supabase } from "@/lib/supabase/client"
+import { authedFetch } from "@/lib/supabase/authed-fetch"
+import { resolveCurrentUserRole } from "@/lib/supabase/client-role"
+import { isAdminRole } from "@/lib/auth/roles"
 
 interface ModelRow {
   id: string
@@ -40,18 +45,40 @@ interface MetricsPayload {
   recent_events: Array<{ id: string; event_type: string; created_at: string; payload: any; session_id: string }>
 }
 
+interface AgentDeploymentConfig {
+  id: string
+  name: string
+  description?: string | null
+  event_type: string
+  role_family?: string | null
+  target_url: string
+  http_method: string
+  is_active: boolean
+  timeout_ms: number
+  headers: Record<string, string>
+  request_template: Record<string, any>
+  updated_at?: string
+}
+
+interface DeploymentRun {
+  id: string
+  status: string
+  deployment_name: string
+  session_id: string
+  response_status?: number | null
+  error_message?: string | null
+  created_at: string
+}
+
 export default function AdminPage() {
+  const router = useRouter()
   const [models, setModels] = useState<ModelRow[]>([])
   const [metrics, setMetrics] = useState<MetricsPayload | null>(null)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [authReady, setAuthReady] = useState(false)
-  const [authEmail, setAuthEmail] = useState("")
   const [authUserEmail, setAuthUserEmail] = useState<string | null>(null)
   const [authRole, setAuthRole] = useState<string | null>(null)
-  const [authError, setAuthError] = useState<string | null>(null)
-  const [authInfo, setAuthInfo] = useState<string | null>(null)
-  const [authSending, setAuthSending] = useState(false)
 
   const [provider, setProvider] = useState("openai")
   const [modelKey, setModelKey] = useState("gpt-4o")
@@ -61,57 +88,60 @@ export default function AdminPage() {
   const [endpoint, setEndpoint] = useState("")
   const [advancedOpen, setAdvancedOpen] = useState(false)
 
-  const authedFetch = async (url: string, init?: RequestInit) => {
-    const { data } = await supabase.auth.getSession()
-    const token = data.session?.access_token
-    const headers = new Headers(init?.headers || {})
-    if (token) headers.set("Authorization", `Bearer ${token}`)
-    return fetch(url, { ...init, headers })
-  }
-
-  const resolveRole = async () => {
-    const { data: sessionData } = await supabase.auth.getSession()
-    const user = sessionData.session?.user || null
-    const userEmail = user?.email || null
-    setAuthUserEmail(userEmail)
-    if (!user) {
-      setAuthRole(null)
-      setAuthReady(true)
-      return
-    }
-
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
-      .maybeSingle()
-
-    if (profileError) {
-      setAuthRole(null)
-      setAuthReady(true)
-      return
-    }
-
-    setAuthRole((profile as any)?.role || null)
-    setAuthReady(true)
-  }
+  const [agentConfigs, setAgentConfigs] = useState<AgentDeploymentConfig[]>([])
+  const [agentRuns, setAgentRuns] = useState<DeploymentRun[]>([])
+  const [agentSubmitting, setAgentSubmitting] = useState(false)
+  const [agentFormError, setAgentFormError] = useState<string | null>(null)
+  const [agentName, setAgentName] = useState("")
+  const [agentDescription, setAgentDescription] = useState("")
+  const [agentEventType, setAgentEventType] = useState("session.assist")
+  const [agentRoleFamily, setAgentRoleFamily] = useState("all")
+  const [agentTargetUrl, setAgentTargetUrl] = useState("")
+  const [agentHttpMethod, setAgentHttpMethod] = useState("POST")
+  const [agentTimeoutMs, setAgentTimeoutMs] = useState("12000")
+  const [agentHeadersJson, setAgentHeadersJson] = useState('{\n  "Content-Type": "application/json"\n}')
+  const [agentTemplateJson, setAgentTemplateJson] = useState('{\n  "source": "oneorigin_interview",\n  "payload": {}\n}')
 
   const loadData = async () => {
     setLoading(true)
-    const [modelsResponse, metricsResponse] = await Promise.all([
+    const [modelsResponse, metricsResponse, deploymentsResponse] = await Promise.all([
       authedFetch("/api/admin/models"),
-      authedFetch("/api/admin/metrics")
+      authedFetch("/api/admin/metrics"),
+      authedFetch("/api/admin/agent-deployments")
     ])
 
-    const modelsJson = await modelsResponse.json()
-    const metricsJson = await metricsResponse.json()
+    const modelsJson = await modelsResponse.json().catch(() => ({}))
+    const metricsJson = await metricsResponse.json().catch(() => ({}))
+    const deploymentsJson = await deploymentsResponse.json().catch(() => ({}))
 
     setModels(modelsJson.models || [])
     setMetrics(metricsJson || null)
+    setAgentConfigs(deploymentsJson.configs || [])
+    setAgentRuns(deploymentsJson.recent_runs || [])
     setLoading(false)
   }
 
   useEffect(() => {
+    let cancelled = false
+
+    const resolveRole = async () => {
+      const { email, role } = await resolveCurrentUserRole()
+      if (cancelled) return
+
+      if (!email) {
+        router.replace("/admin/login")
+        return
+      }
+
+      setAuthUserEmail(email)
+      setAuthRole(role)
+      setAuthReady(true)
+
+      if (isAdminRole(role)) {
+        await loadData()
+      }
+    }
+
     void resolveRole()
 
     const { data: subscription } = supabase.auth.onAuthStateChange(() => {
@@ -119,18 +149,11 @@ export default function AdminPage() {
     })
 
     return () => {
+      cancelled = true
       subscription.subscription.unsubscribe()
     }
-  }, [])
-
-  useEffect(() => {
-    if (!authReady) return
-    if (authRole === "admin") {
-      void loadData()
-    } else {
-      setLoading(false)
-    }
-  }, [authReady, authRole])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router])
 
   const addModel = async () => {
     setSubmitting(true)
@@ -156,6 +179,60 @@ export default function AdminPage() {
     setSubmitting(false)
   }
 
+  const saveAgentConfig = async () => {
+    if (agentSubmitting) return
+    setAgentSubmitting(true)
+    setAgentFormError(null)
+
+    try {
+      const headers = JSON.parse(agentHeadersJson || "{}")
+      const requestTemplate = JSON.parse(agentTemplateJson || "{}")
+
+      const response = await authedFetch("/api/admin/agent-deployments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: agentName,
+          description: agentDescription || null,
+          event_type: agentEventType,
+          role_family: agentRoleFamily === "all" ? null : agentRoleFamily,
+          target_url: agentTargetUrl,
+          http_method: agentHttpMethod,
+          timeout_ms: Number(agentTimeoutMs || 12000),
+          headers,
+          request_template: requestTemplate,
+          is_active: true
+        })
+      })
+
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(data?.error || "Failed to save agent deployment flow")
+      }
+
+      setAgentName("")
+      setAgentDescription("")
+      setAgentTargetUrl("")
+      await loadData()
+    } catch (error: any) {
+      setAgentFormError(error?.message || "Unable to save deployment flow.")
+    } finally {
+      setAgentSubmitting(false)
+    }
+  }
+
+  const toggleAgentConfig = async (config: AgentDeploymentConfig) => {
+    const response = await authedFetch("/api/admin/agent-deployments", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: config.id, is_active: !config.is_active })
+    })
+
+    if (response.ok) {
+      await loadData()
+    }
+  }
+
   const healthCards = useMemo(() => {
     if (!metrics) return []
     return [
@@ -166,30 +243,9 @@ export default function AdminPage() {
     ]
   }, [metrics])
 
-  const signInWithMagicLink = async () => {
-    if (!authEmail.trim() || authSending) return
-    setAuthSending(true)
-    setAuthError(null)
-    setAuthInfo(null)
-    try {
-      const redirectTo = typeof window !== "undefined" ? `${window.location.origin}/admin` : undefined
-      const { error } = await supabase.auth.signInWithOtp({
-        email: authEmail.trim(),
-        options: redirectTo ? { emailRedirectTo: redirectTo } : undefined
-      })
-      if (error) throw error
-      setAuthInfo("Magic link sent. Open it to finish signing in.")
-    } catch (err: any) {
-      setAuthError(err?.message || "Unable to send magic link.")
-    } finally {
-      setAuthSending(false)
-    }
-  }
-
   const signOut = async () => {
     await supabase.auth.signOut()
-    setAuthUserEmail(null)
-    setAuthRole(null)
+    router.replace("/admin/login")
   }
 
   if (!authReady) {
@@ -200,50 +256,7 @@ export default function AdminPage() {
     )
   }
 
-  if (!authUserEmail) {
-    return (
-      <main className="surface-grid min-h-screen px-4 py-10 md:px-8">
-        <div className="mx-auto w-full max-w-xl space-y-6">
-          <header className="flex items-center justify-between gap-3">
-            <div className="space-y-1">
-              <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Admin</p>
-              <h1 className="text-3xl font-semibold">Sign in to configure Astra</h1>
-            </div>
-            <ThemeToggle />
-          </header>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Lock className="h-4 w-4 text-primary" />
-                Admin access required
-              </CardTitle>
-              <CardDescription>Sign in with a secure magic link. Your `profiles.role` must be `admin`.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label>Email</Label>
-                <Input value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} placeholder="admin@oneorigin.us" />
-              </div>
-              <Button className="w-full" onClick={signInWithMagicLink} disabled={authSending || !authEmail.trim()}>
-                {authSending ? "Sending..." : "Send Magic Link"}
-              </Button>
-              {authInfo && <p className="text-sm text-muted-foreground">{authInfo}</p>}
-              {authError && <p className="text-sm text-destructive">{authError}</p>}
-              <div className="rounded-xl border bg-muted/30 p-4 text-xs text-muted-foreground leading-6">
-                If your account is new, a `profiles` row is created automatically. Update `profiles.role` to `admin` for this email.
-              </div>
-              <Button variant="outline" asChild className="w-full">
-                <Link href="/interviewer">Back to interviewer</Link>
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-      </main>
-    )
-  }
-
-  if (authRole !== "admin") {
+  if (!isAdminRole(authRole)) {
     return (
       <main className="surface-grid min-h-screen px-4 py-10 md:px-8">
         <div className="mx-auto w-full max-w-xl space-y-6">
@@ -258,13 +271,12 @@ export default function AdminPage() {
             <CardHeader>
               <CardTitle>Forbidden</CardTitle>
               <CardDescription>
-                Signed in as <span className="font-medium text-foreground">{authUserEmail}</span>. Role:{" "}
-                <span className="font-medium text-foreground">{authRole || "unknown"}</span>
+                Signed in as <span className="font-medium text-foreground">{authUserEmail}</span>. Role: <span className="font-medium text-foreground">{authRole || "unknown"}</span>
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <p className="text-sm text-muted-foreground">
-                This page is gated to admins. Update your `profiles.role` to `admin`.
+                This page is gated to admins.
               </p>
               <Button onClick={signOut} className="w-full">Sign out</Button>
               <Button variant="outline" asChild className="w-full">
@@ -284,6 +296,7 @@ export default function AdminPage() {
           <div className="space-y-1">
             <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Admin</p>
             <h1 className="text-3xl font-semibold">AI Sidekick Configuration + Live Metrics</h1>
+            {authUserEmail ? <p className="text-xs text-muted-foreground">Signed in: {authUserEmail}</p> : null}
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" asChild>
@@ -293,6 +306,7 @@ export default function AdminPage() {
               </Link>
             </Button>
             <Button variant="outline" onClick={signOut}>
+              <LogOut className="h-4 w-4" />
               Sign out
             </Button>
             <ThemeToggle />
@@ -313,6 +327,7 @@ export default function AdminPage() {
         <Tabs defaultValue="models" className="space-y-4">
           <TabsList>
             <TabsTrigger value="models">Model Registry</TabsTrigger>
+            <TabsTrigger value="interviewer_config">Interviewer Config</TabsTrigger>
             <TabsTrigger value="events">Event Logs</TabsTrigger>
             <TabsTrigger value="metrics">Prompting Metrics</TabsTrigger>
           </TabsList>
@@ -424,6 +439,162 @@ export default function AdminPage() {
                   <Button onClick={addModel} disabled={submitting || !provider || !modelKey || !purpose || !apiKey} className="w-full">
                     <Plus className="h-4 w-4" />
                     {submitting ? "Saving..." : "Add Model"}
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="interviewer_config">
+            <div className="grid gap-4 lg:grid-cols-[1.2fr,1fr]">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Agent Deployment Panel Configuration</CardTitle>
+                  <CardDescription>
+                    Define deployable webhook/API flows (n8n compatible). Interviewers can launch these into any live session.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Role</TableHead>
+                        <TableHead>Method</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Action</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {agentConfigs.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={5}>No deployment flows configured.</TableCell>
+                        </TableRow>
+                      ) : (
+                        agentConfigs.map((config) => (
+                          <TableRow key={config.id}>
+                            <TableCell>
+                              <div className="font-medium">{config.name}</div>
+                              <div className="text-xs text-muted-foreground truncate max-w-[260px]">{config.target_url}</div>
+                            </TableCell>
+                            <TableCell className="text-xs">{config.role_family || "all"}</TableCell>
+                            <TableCell className="text-xs">{config.http_method}</TableCell>
+                            <TableCell>
+                              <Badge variant={config.is_active ? "secondary" : "outline"}>
+                                {config.is_active ? "active" : "inactive"}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <Button size="sm" variant="outline" onClick={() => void toggleAgentConfig(config)}>
+                                {config.is_active ? "Disable" : "Enable"}
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+
+                  <div className="rounded-xl border p-4">
+                    <p className="mb-2 text-sm font-medium">Recent deployment runs</p>
+                    <div className="max-h-[220px] overflow-y-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Time</TableHead>
+                            <TableHead>Flow</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead>HTTP</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {agentRuns.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={4}>No deployments recorded yet.</TableCell>
+                            </TableRow>
+                          ) : (
+                            agentRuns.map((run) => (
+                              <TableRow key={run.id}>
+                                <TableCell className="text-xs text-muted-foreground">{new Date(run.created_at).toLocaleString()}</TableCell>
+                                <TableCell className="text-xs">{run.deployment_name}</TableCell>
+                                <TableCell>
+                                  <Badge variant={run.status === "success" ? "secondary" : "outline"}>{run.status}</Badge>
+                                </TableCell>
+                                <TableCell className="text-xs">{run.response_status || "-"}</TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Create Deployment Flow</CardTitle>
+                  <CardDescription>
+                    Configure endpoint behavior once. Interviewers only select and deploy during live sessions.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="space-y-2">
+                    <Label>Name</Label>
+                    <Input value={agentName} onChange={(event) => setAgentName(event.target.value)} placeholder="n8n - Sales Objection Coaching" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Description</Label>
+                    <Input value={agentDescription} onChange={(event) => setAgentDescription(event.target.value)} placeholder="What this deployment flow does" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-2">
+                      <Label>Event Type</Label>
+                      <Input value={agentEventType} onChange={(event) => setAgentEventType(event.target.value)} placeholder="session.assist" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Role family</Label>
+                      <Input value={agentRoleFamily} onChange={(event) => setAgentRoleFamily(event.target.value)} placeholder="sales / agentic_eng / all" />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Target URL</Label>
+                    <Input value={agentTargetUrl} onChange={(event) => setAgentTargetUrl(event.target.value)} placeholder="https://n8n.company.com/webhook/..." />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-2">
+                      <Label>HTTP Method</Label>
+                      <Input value={agentHttpMethod} onChange={(event) => setAgentHttpMethod(event.target.value.toUpperCase())} placeholder="POST" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Timeout (ms)</Label>
+                      <Input value={agentTimeoutMs} onChange={(event) => setAgentTimeoutMs(event.target.value)} placeholder="12000" />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Headers JSON</Label>
+                    <Textarea rows={5} className="font-mono text-xs" value={agentHeadersJson} onChange={(event) => setAgentHeadersJson(event.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Request Template JSON</Label>
+                    <Textarea rows={6} className="font-mono text-xs" value={agentTemplateJson} onChange={(event) => setAgentTemplateJson(event.target.value)} />
+                  </div>
+
+                  {agentFormError ? <p className="text-sm text-destructive">{agentFormError}</p> : null}
+
+                  <Button
+                    onClick={saveAgentConfig}
+                    disabled={
+                      agentSubmitting ||
+                      !agentName.trim() ||
+                      !agentEventType.trim() ||
+                      !agentTargetUrl.trim() ||
+                      !agentHttpMethod.trim()
+                    }
+                    className="w-full"
+                  >
+                    <Zap className="h-4 w-4" />
+                    {agentSubmitting ? "Saving..." : "Save Deployment Flow"}
                   </Button>
                 </CardContent>
               </Card>
