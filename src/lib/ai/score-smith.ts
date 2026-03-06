@@ -61,6 +61,18 @@ export const STANDARD_DIMENSIONS: ScoringDimension[] = [
   }
 ]
 
+export const ADAPTABILITY_DIMENSION: ScoringDimension = {
+  name: 'adaptability',
+  description: 'How well the candidate adapted to mid-round curveballs and constraints',
+  maxScore: 20,
+  scoringCriteria: [
+    'Acknowledged the new constraint or scenario change explicitly',
+    'Adjusted approach, plan, or communication in response to the constraint',
+    'Maintained composure and professionalism under pressure',
+    'Proposed a viable path forward given the new constraint'
+  ]
+}
+
 export interface TruthLogEntry {
   claim: string
   evidence: string
@@ -112,20 +124,35 @@ Rules:
   }
 }
 
+export interface CurveballContext {
+  key?: string
+  title: string
+  detail: string
+  injected_at?: string
+}
+
 export async function scoreArtifact(
   sessionId: string,
   roundId: string,
   artifactId: string,
   artifactContent: string,
   dimensions: ScoringDimension[],
-  track?: string
+  track?: string,
+  curveballs?: CurveballContext[]
 ): Promise<ScoringResult[]> {
   const results: ScoringResult[] = []
+
+  const curveballBlock = curveballs && curveballs.length > 0
+    ? `\n\nCurveballs Injected During This Round:
+${curveballs.map((c, i) => `${i + 1}. "${c.title}" — ${c.detail}`).join('\n')}
+
+When scoring, consider whether the candidate acknowledged and adapted to these constraints.`
+    : ''
 
   for (const dimension of dimensions) {
     const prompt = `You are ScoreSmith, an evidence-based interview scoring system.
 
-Task: Score the following sales interaction on the dimension "${dimension.name}".
+Task: Score the following interaction on the dimension "${dimension.name}".
 
 Dimension: ${dimension.name}
 Description: ${dimension.description}
@@ -135,7 +162,7 @@ Scoring Criteria:
 ${dimension.scoringCriteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}
 
 Content to Score:
-${artifactContent}
+${artifactContent}${curveballBlock}
 
 Instructions:
 1. Read the content carefully

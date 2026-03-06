@@ -1,8 +1,12 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase/server'
+import { requireInterviewer } from '@/lib/supabase/require-role'
 
 export async function POST(request: Request) {
   try {
+    const gate = await requireInterviewer(request)
+    if (!gate.ok) return gate.response
+
     const { session_id } = await request.json()
 
     if (!session_id) {
@@ -105,6 +109,8 @@ export async function POST(request: Request) {
       event_type: 'magic_link_issued',
       actor: 'interviewer',
       payload: {
+        issued_by_user_id: gate.user.id,
+        issued_by_email: gate.user.email || null,
         candidate_id: candidate.id,
         email,
         redirect_to: redirectTo,

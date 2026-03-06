@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { AlertTriangle, CheckCircle2, Slash } from 'lucide-react'
-import { useParams } from 'next/navigation'
+import { AlertTriangle, BarChart3, BookOpenText, CheckCircle2, Clock, FileSearch, ListOrdered, MessageSquareText, ScrollText, Slash, Zap } from 'lucide-react'
+import { useParams, useRouter } from 'next/navigation'
 import {
   ArrowLeft,
   BadgeCheck,
@@ -13,15 +13,16 @@ import {
   FileText,
   Link2,
   Loader2,
-  ShieldAlert
+  LogOut,
+  Sparkles
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { GatePanel } from '@/components/GatePanel'
-import { ContributionGraph } from '@/components/ui/smoothui/contribution-graph'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
 import { SessionProvider, useSession } from '@/contexts/SessionContext'
 import { getRoleWidgetTemplate, normalizeRoleWidgetConfig, roleWidgetFamilies } from '@/lib/role-widget-templates'
@@ -36,6 +37,10 @@ import { AIAssessmentsPanel } from '@/components/AIAssessmentsPanel'
 import { useVoiceAnalysis } from '@/hooks/useVoiceAnalysis'
 import { SayMeter } from '@/components/voice/SayMeter'
 import { SuggestionsPanel } from '@/components/voice/SuggestionsPanel'
+import { authedFetch } from '@/lib/supabase/authed-fetch'
+import { resolveCurrentUserRole } from '@/lib/supabase/client-role'
+import { isInterviewerRole } from '@/lib/auth/roles'
+import { supabase } from '@/lib/supabase/client'
 
 type TranscriptEntry = {
   speaker: string
@@ -47,6 +52,25 @@ type ActionEntry = {
   action: string
   detail?: string
   time: string
+}
+
+type DeployableAgentConfig = {
+  id: string
+  name: string
+  description?: string | null
+  event_type: string
+  role_family?: string | null
+  http_method: string
+  is_active: boolean
+}
+
+type AgentDeploymentRun = {
+  id: string
+  status: string
+  deployment_name: string
+  response_status?: number | null
+  error_message?: string | null
+  created_at: string
 }
 
 // Analyze live transcript in real-time
@@ -496,6 +520,7 @@ function resolveResumeUrl(artifacts: any[]) {
 }
 
 function InterviewerView() {
+  const router = useRouter()
   const { session, scopePackage, scores, events, rounds, artifacts, refresh } = useSession()
   const [notes, setNotes] = useState('')
   const [magicLink, setMagicLink] = useState<string | null>(null)
@@ -529,18 +554,33 @@ function InterviewerView() {
       answer?: string
     }>
   >([])
-  const [showNotes, setShowNotes] = useState(false)
   const [showFollowups, setShowFollowups] = useState(false)
   const [showControls, setShowControls] = useState(true)
   const [sendingAction, setSendingAction] = useState<string | null>(null)
   const [curveball, setCurveball] = useState('')
   const [customCurveball, setCustomCurveball] = useState('')
+  const [aiCurveballSuggestions, setAiCurveballSuggestions] = useState<Array<{
+    id: string; title: string; detail: string; rationale: string;
+    priority: string; source_evidence: string
+  }>>([])
+  const [curveballSuggestionsLoading, setCurveballSuggestionsLoading] = useState(false)
+  const [curveballSuggestionsContext, setCurveballSuggestionsContext] = useState('')
+  const [scorecardOpening, setScorecardOpening] = useState(false)
+  const [sessionStatusLoading, setSessionStatusLoading] = useState<string | null>(null)
   const [persona, setPersona] = useState('')
   const [customPersona, setCustomPersona] = useState('')
   const [escalationLevel, setEscalationLevel] = useState('L3')
   const [flagType, setFlagType] = useState<string>('custom')
   const [flagDescription, setFlagDescription] = useState('')
   const [flagSeverity, setFlagSeverity] = useState<'warning' | 'critical'>('warning')
+  const [authReady, setAuthReady] = useState(false)
+  const [authEmail, setAuthEmail] = useState<string | null>(null)
+  const [deploymentConfigs, setDeploymentConfigs] = useState<DeployableAgentConfig[]>([])
+  const [deploymentRuns, setDeploymentRuns] = useState<AgentDeploymentRun[]>([])
+  const [selectedDeploymentId, setSelectedDeploymentId] = useState<string>('')
+  const [deploymentInput, setDeploymentInput] = useState('{\n  \"notes\": \"\"\n}')
+  const [deployingAgent, setDeployingAgent] = useState(false)
+  const [deploymentError, setDeploymentError] = useState<string | null>(null)
 
   const voiceActiveRound = (rounds || []).find((round) => round.status === 'active')
   const isVoiceRealtimeActive = voiceActiveRound?.round_type === 'voice-realtime'
@@ -592,20 +632,76 @@ function InterviewerView() {
 
   const actionLog = useMemo(() => buildActionLog(events as any[]), [events])
   const resumeUrl = useMemo(() => resolveResumeUrl(artifacts as any[]), [artifacts])
-  const activityData = useMemo(() => {
-    const dailyCounts = new Map<string, number>()
+  const candidateActivityMetrics = useMemo(() => {
+    const allEvents = (events as any[]) || []
+    const candidateActions = allEvents.filter((event) => event.event_type === 'candidate_action')
+    const candidateArtifacts = allEvents.filter((event) => event.event_type === 'artifact_submitted')
+    const followupAsked = allEvents.filter((event) => event.event_type === 'followup_question')
+    const followupAnswered = allEvents.filter((event) => event.event_type === 'followup_answer')
+    const redFlags = allEvents.filter((event) => event.event_type === 'red_flag_detected')
+    const completedRounds = (rounds || []).filter((round: any) => round.status === 'completed').length
+    const avgScore =
+      (scores || []).length > 0
+        ? Math.round(
+            (scores || []).reduce((sum: number, score: any) => sum + Number(score?.overall_score || 0), 0) /
+              (scores || []).length
+          )
+        : 0
 
-    for (const event of (events as any[]) || []) {
-      const date = new Date(event.created_at).toISOString().slice(0, 10)
-      dailyCounts.set(date, (dailyCounts.get(date) || 0) + 1)
-    }
+    const completionRate = rounds && rounds.length > 0 ? Math.round((completedRounds / rounds.length) * 100) : 0
+    const followupResponseRate =
+      followupAsked.length > 0 ? Math.round((followupAnswered.length / followupAsked.length) * 100) : 0
 
-    return [...dailyCounts.entries()].map(([date, count]) => ({
-      date,
-      count,
-      level: Math.min(4, Math.floor(count / 2))
-    }))
-  }, [events])
+    const latestCandidateActionAt =
+      candidateActions.length > 0
+        ? new Date(candidateActions[0].created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : null
+
+    return [
+      {
+        key: 'candidate-events',
+        label: 'Candidate Events',
+        value: candidateActions.length + candidateArtifacts.length,
+        helper: latestCandidateActionAt ? `Latest at ${latestCandidateActionAt}` : 'Awaiting first action',
+        icon: MessageSquareText
+      },
+      {
+        key: 'session-completion',
+        label: 'Round Completion',
+        value: `${completedRounds}/${rounds?.length || 0}`,
+        helper: `${completionRate}% completed`,
+        icon: BarChart3
+      },
+      {
+        key: 'followup-loop',
+        label: 'Follow-up Loop',
+        value: `${followupAnswered.length}/${followupAsked.length}`,
+        helper: `${followupResponseRate}% answered`,
+        icon: BookOpenText
+      },
+      {
+        key: 'artifact-velocity',
+        label: 'Artifacts Submitted',
+        value: artifacts.length,
+        helper: 'From assessment rounds',
+        icon: FileSearch
+      },
+      {
+        key: 'quality-signal',
+        label: 'Average Score',
+        value: avgScore > 0 ? avgScore : '--',
+        helper: 'Across completed scoring runs',
+        icon: CheckCircle2
+      },
+      {
+        key: 'risk-signal',
+        label: 'Risk Signals',
+        value: redFlags.length,
+        helper: redFlags.length > 0 ? 'Review flagged moments' : 'No active flags',
+        icon: Clock
+      }
+    ]
+  }, [artifacts.length, events, rounds, scores])
   const noAnswerFlag = useMemo(() => {
     return gateData.redFlags.some((flag) =>
       ['insufficient_response', 'no_evidence'].includes(flag.label)
@@ -788,6 +884,41 @@ function InterviewerView() {
   // Derive role track even when session is temporarily null so hooks stay stable.
   const roleTrack = (session as any)?.job?.track || 'sales'
 
+  const deploymentConfigsForTrack = useMemo(() => {
+    return deploymentConfigs.filter((config) => {
+      const family = String(config.role_family || 'all').toLowerCase()
+      return family === 'all' || family === roleTrack.toLowerCase()
+    })
+  }, [deploymentConfigs, roleTrack])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const checkAccess = async () => {
+      const { email, role } = await resolveCurrentUserRole()
+      if (cancelled) return
+
+      if (!email) {
+        router.replace('/interviewer/login')
+        return
+      }
+
+      if (!isInterviewerRole(role)) {
+        router.replace('/interviewer/login?denied=1')
+        return
+      }
+
+      setAuthEmail(email)
+      setAuthReady(true)
+    }
+
+    void checkAccess()
+
+    return () => {
+      cancelled = true
+    }
+  }, [router])
+
   // Important: keep hooks unconditional. The session is null on initial render; returning early
   // before calling `useEffect` changes hook order once session loads, causing React warnings.
   useEffect(() => {
@@ -804,6 +935,29 @@ function InterviewerView() {
     const timeout = setTimeout(() => setActionNotice(null), 2600)
     return () => clearTimeout(timeout)
   }, [actionNotice])
+
+  useEffect(() => {
+    if (!session?.id || !authReady) return
+
+    const loadDeployments = async () => {
+      setDeploymentError(null)
+      const response = await authedFetch(`/api/interviewer/deployments?session_id=${session.id}`, {
+        cache: 'no-store'
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        setDeploymentError(data?.error || 'Failed to load deployment panel.')
+        return
+      }
+      setDeploymentConfigs(data?.configs || [])
+      setDeploymentRuns(data?.deployments || [])
+      if (Array.isArray(data?.configs) && data.configs.length > 0) {
+        setSelectedDeploymentId((current) => current || data.configs[0].id)
+      }
+    }
+
+    void loadDeployments()
+  }, [session?.id, authReady])
 
   const fetchResumePreview = async (sessionId: string) => {
     setResumePreviewState('loading')
@@ -839,6 +993,17 @@ function InterviewerView() {
     void fetchResumePreview(session.id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.id])
+
+  if (!authReady) {
+    return (
+      <main className="surface-grid flex min-h-screen items-center justify-center px-4 py-10">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Validating interviewer access...
+        </div>
+      </main>
+    )
+  }
 
   if (!session) return null
 
@@ -884,7 +1049,7 @@ function InterviewerView() {
     // Show immediate optimistic feedback
     setActionNotice({ kind: 'success', message: `Sending: ${action_type.replace(/_/g, ' ')}...` })
     try {
-      const response = await fetch('/api/interviewer/action', {
+      const response = await authedFetch('/api/interviewer/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -921,7 +1086,7 @@ function InterviewerView() {
 
     try {
       // Fire gate_decision event (non-blocking — don't wait for full round-trip)
-      const actionPromise = fetch('/api/interviewer/action', {
+      const actionPromise = authedFetch('/api/interviewer/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -942,7 +1107,7 @@ function InterviewerView() {
         // Fire both in parallel
         await Promise.all([
           actionPromise,
-          fetch(`/api/session/${session.id}/status`, {
+          authedFetch(`/api/session/${session.id}/status`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status: 'aborted', reason: 'interviewer_stop' })
@@ -962,7 +1127,7 @@ function InterviewerView() {
         try {
           await actionPromise
           if (activeRound) {
-            await fetch('/api/round/complete', {
+            await authedFetch('/api/round/complete', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -972,7 +1137,7 @@ function InterviewerView() {
             })
           }
           if (nextRound) {
-            await fetch('/api/round/start', {
+            await authedFetch('/api/round/start', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -998,7 +1163,7 @@ function InterviewerView() {
     setSendLinkError(null)
 
     try {
-      const response = await fetch('/api/interviewer/send-link', {
+      const response = await authedFetch('/api/interviewer/send-link', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: session.id })
@@ -1032,7 +1197,7 @@ function InterviewerView() {
     setActionNotice({ kind: 'success', message: 'Ending round...' })
     // Fire both requests in parallel, don't block UI
     Promise.all([
-      fetch('/api/interviewer/action', {
+      authedFetch('/api/interviewer/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1041,7 +1206,7 @@ function InterviewerView() {
           payload: { round_number: activeRound.round_number }
         })
       }).catch(() => {}),
-      fetch('/api/round/complete', {
+      authedFetch('/api/round/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1073,6 +1238,47 @@ function InterviewerView() {
       target_round: null,
     })
     setCustomCurveball('')
+  }
+
+  const fetchCurveballSuggestions = async () => {
+    if (!session) return
+    const activeRound = (rounds || []).find((r) => r.status === 'active')
+    if (!activeRound || activeRound.round_type !== 'text') return
+    setCurveballSuggestionsLoading(true)
+    setCurveballSuggestionsContext('')
+    try {
+      const res = await fetch('/api/ai/curveball-suggest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: session.id,
+          round_number: activeRound.round_number
+        })
+      })
+      const data = await res.json()
+      setAiCurveballSuggestions(data.suggestions || [])
+      setCurveballSuggestionsContext(data.context_summary || data.error || '')
+    } catch {
+      setAiCurveballSuggestions([])
+      setCurveballSuggestionsContext('Network error — could not reach server.')
+    } finally {
+      setCurveballSuggestionsLoading(false)
+    }
+  }
+
+  const approveAiCurveball = async (suggestion: typeof aiCurveballSuggestions[0]) => {
+    await sendAction('inject_curveball', {
+      curveball_key: `ai_suggested_${Date.now()}`,
+      custom_text: suggestion.detail,
+      target_round: null,
+    })
+    // Clear all suggestions after injecting one
+    setAiCurveballSuggestions([])
+    setCurveballSuggestionsContext('')
+  }
+
+  const dismissAiCurveball = (suggestionId: string) => {
+    setAiCurveballSuggestions((prev) => prev.filter((s) => s.id !== suggestionId))
   }
 
   const switchPersona = async (personaKey: string) => {
@@ -1135,27 +1341,82 @@ function InterviewerView() {
     session.status === 'live' ? 'default' : session.status === 'completed' ? 'secondary' : 'outline'
 
   const setSessionStatus = async (status: 'completed' | 'aborted', reason?: string) => {
-    const response = await fetch(`/api/session/${session.id}/status`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status, reason: reason || null })
-    })
+    setSessionStatusLoading(status)
+    try {
+      const response = await authedFetch(`/api/session/${session.id}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, reason: reason || null })
+      })
 
-    const data = await response.json().catch(() => ({}))
-    if (!response.ok) {
-      setActionNotice({ kind: 'error', message: data?.error || 'Failed to update session status.' })
-      return
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        setActionNotice({ kind: 'error', message: data?.error || 'Failed to update session status.' })
+        return
+      }
+
+      setActionNotice({ kind: 'success', message: `Session marked ${status}.` })
+      refresh().catch(() => {})
+    } finally {
+      setSessionStatusLoading(null)
     }
+  }
 
-    setActionNotice({ kind: 'success', message: `Session marked ${status}.` })
-    refresh().catch(() => {})
+  const deploySelectedAgent = async () => {
+    if (!selectedDeploymentId || !session?.id || deployingAgent) return
+    setDeployingAgent(true)
+    setDeploymentError(null)
+
+    try {
+      let parsedInput = {}
+      if (deploymentInput.trim()) {
+        parsedInput = JSON.parse(deploymentInput)
+      }
+
+      const response = await authedFetch('/api/interviewer/deployments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: session.id,
+          webhook_config_id: selectedDeploymentId,
+          input: parsedInput
+        })
+      })
+
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(data?.error || 'Deployment failed.')
+      }
+
+      const reload = await authedFetch(`/api/interviewer/deployments?session_id=${session.id}`, {
+        cache: 'no-store'
+      })
+      const reloadJson = await reload.json().catch(() => ({}))
+      if (reload.ok) {
+        setDeploymentRuns(reloadJson?.deployments || [])
+      }
+
+      setActionNotice({
+        kind: data?.ok ? 'success' : 'error',
+        message: data?.ok ? 'Agent flow deployed successfully.' : `Deployment ${data?.status || 'failed'}.`
+      })
+    } catch (error: any) {
+      setDeploymentError(error?.message || 'Failed to deploy selected agent flow.')
+    } finally {
+      setDeployingAgent(false)
+    }
+  }
+
+  const signOut = async () => {
+    await supabase.auth.signOut()
+    router.replace('/interviewer/login')
   }
 
   const resolvedResumeUrl = resumePreview?.signedUrl || resumeUrl
 
   return (
     <main className="surface-grid min-h-screen px-4 py-8 md:px-8">
-      <div className="mx-auto w-full max-w-7xl space-y-5">
+      <div className="mx-auto w-full max-w-[1820px] space-y-5">
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" asChild>
@@ -1181,25 +1442,42 @@ function InterviewerView() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="secondary" asChild>
-              <Link href={`/scorecard/${session.id}`}>
-                <FileText className="mr-2 h-4 w-4" />
-                Score Card
-              </Link>
+            {authEmail ? (
+              <span className="text-xs text-muted-foreground">{authEmail}</span>
+            ) : null}
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={scorecardOpening}
+              onClick={() => {
+                setScorecardOpening(true)
+                router.push(`/scorecard/${session.id}`)
+              }}
+            >
+              {scorecardOpening
+                ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                : <FileText className="mr-2 h-4 w-4" />}
+              {scorecardOpening ? 'Loading...' : 'Score Card'}
             </Button>
-            <Button size="sm" variant="outline" onClick={() => void setSessionStatus('completed', 'interviewer_complete')}>
-              Mark Completed
+            <Button size="sm" variant="outline" disabled={sessionStatusLoading !== null} onClick={() => void setSessionStatus('completed', 'interviewer_complete')}>
+              {sessionStatusLoading === 'completed' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {sessionStatusLoading === 'completed' ? 'Completing...' : 'Mark Completed'}
             </Button>
-            <Button size="sm" variant="destructive" onClick={() => void setSessionStatus('aborted', 'interviewer_abort')}>
-              Abort Session
+            <Button size="sm" variant="destructive" disabled={sessionStatusLoading !== null} onClick={() => void setSessionStatus('aborted', 'interviewer_abort')}>
+              {sessionStatusLoading === 'aborted' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {sessionStatusLoading === 'aborted' ? 'Aborting...' : 'Abort Session'}
+            </Button>
+            <Button size="sm" variant="outline" onClick={signOut}>
+              <LogOut className="h-4 w-4" />
+              Sign out
             </Button>
             <ThemeToggle />
           </div>
         </header>
 
-        <div className="grid w-full gap-6 lg:grid-cols-[1.15fr,1fr]">
-        <section className="space-y-6">
-          <Card>
+        <div className="grid w-full gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,360px)_minmax(180px,220px)]">
+        <section className="grid auto-rows-max gap-6 xl:grid-cols-2">
+          <Card className="xl:col-span-2">
             <CardHeader className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -1279,7 +1557,7 @@ function InterviewerView() {
           </Card>
 
           {autoStopTriggered && (
-            <div className="rounded-lg border-2 border-destructive/40 bg-destructive/10 px-5 py-4 animate-pulse">
+            <div className="rounded-lg border-2 border-destructive/40 bg-destructive/10 px-5 py-4 animate-pulse xl:col-span-2">
               <div className="flex items-center gap-3">
                 <AlertTriangle className="h-5 w-5 text-destructive" />
                 <div>
@@ -1292,289 +1570,7 @@ function InterviewerView() {
             </div>
           )}
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Live Transcript</CardTitle>
-              <CardDescription>Conversation and candidate statements in chronological order.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {transcript.length === 0 && (
-                <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
-                  Transcript will populate after the conversation starts.
-                </div>
-              )}
-              {transcript.map((entry, index) => (
-                <div key={`${entry.time}-${index}`} className="rounded-lg border bg-muted/20 p-3">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>{entry.speaker}</span>
-                    <span>{entry.time}</span>
-                  </div>
-                  <p className="mt-2 text-sm">{entry.content}</p>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Round Timeline</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {roundTimeline.length === 0 && (
-                <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
-                  No rounds are loaded for this session.
-                </div>
-              )}
-              {roundTimeline.map((round) => {
-                const roundStatusVariant =
-                  round.status === 'active' ? 'default' : round.status === 'completed' ? 'secondary' : 'outline'
-
-                return (
-                  <div key={round.round_number} className="flex items-center justify-between gap-3 rounded-lg border p-3">
-                    <div>
-                      <p className="text-sm font-medium">
-                        Round {round.round_number}: {round.title}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {round.startedAt
-                          ? `${round.startedAt.toLocaleTimeString()} to ${round.endsAt?.toLocaleTimeString()}`
-                          : `Duration: ${round.durationMinutes} min`}
-                      </p>
-                    </div>
-                    <Badge variant={roundStatusVariant}>{round.status}</Badge>
-                  </div>
-                )
-              })}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Candidate Action Log</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {actionLog.length === 0 && <p className="text-sm text-muted-foreground">Waiting for actions...</p>}
-              {actionLog.map((entry, index) => (
-                <div key={`${entry.time}-${index}`} className="grid grid-cols-[1fr,1fr,auto] items-center gap-2 text-sm">
-                  <span>{entry.action}</span>
-                  <span className="truncate text-muted-foreground">{entry.detail || '-'}</span>
-                  <span className="text-xs text-muted-foreground">{entry.time}</span>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Hiring Manager Activity Map</CardTitle>
-              <CardDescription>Heatmap view of session event intensity.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ContributionGraph data={activityData} showLegend year={new Date().getFullYear()} />
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <FileText className="h-4 w-4 text-primary" />
-                Quick Resume View
-              </CardTitle>
-              <CardDescription>
-                Preview the uploaded resume PDF for this candidate. No hardcoded resume content is shown.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-xs text-muted-foreground">
-                  {resumePreviewState === 'loading'
-                    ? 'Loading resume preview...'
-                    : resumePreviewState === 'ready'
-                      ? resumePreview?.filename || 'Resume PDF'
-                      : resumePreviewState === 'missing'
-                        ? 'No resume uploaded for this candidate.'
-                        : resumePreviewState === 'error'
-                          ? resumePreviewError || 'Unable to load resume preview.'
-                          : ''}
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button size="sm" variant="outline" onClick={() => void fetchResumePreview(session.id)}>
-                    Refresh
-                  </Button>
-                  {resolvedResumeUrl && (
-                    <Button size="sm" variant="outline" asChild>
-                      <a href={resolvedResumeUrl} target="_blank" rel="noreferrer">
-                        <ExternalLink className="h-4 w-4" />
-                        Open
-                      </a>
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              <div className="mt-3 overflow-hidden rounded-lg border">
-                {resolvedResumeUrl ? (
-                  <iframe src={resolvedResumeUrl} title="Candidate resume preview" className="h-[640px] w-full" />
-                ) : (
-                  <div className="flex h-[240px] items-center justify-center bg-muted/20 p-6 text-sm text-muted-foreground">
-                    Resume PDF not available yet. Upload a resume to the `resumes` storage bucket and set
-                    `candidates.resume_storage_path`, or attach a PDF artifact to this session.
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </section>
-
-        <aside className="space-y-6">
-          {/* Voice-Realtime Controls (only show when voice call is active) */}
-          {isVoiceRealtimeActive && (
-            <>
-              <VoiceControlPanel
-                sessionId={session.id}
-                isCallActive={isCallInProgress}
-                track={roleTrack}
-              />
-              <AIAssessmentsPanel sessionId={session.id} />
-
-              {analytics.sayMeter && (
-                <SayMeter
-                  score={analytics.sayMeter.score}
-                  factors={analytics.sayMeter.factors}
-                  summary={analytics.sayMeter.meter_reasoning}
-                  loading={analytics.loading}
-                />
-              )}
-
-              <SuggestionsPanel
-                suggestions={analytics.suggestions}
-                loading={analytics.loading}
-                onDismiss={analytics.dismissSuggestion}
-                onApply={(suggestion) => {
-                  console.log('Apply suggestion:', suggestion)
-                }}
-              />
-            </>
-          )}
-
-          {scores.length === 0 && (
-            <Card className="border-amber-200 bg-amber-50/90 dark:bg-amber-950/30">
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <h4 className="text-sm font-semibold text-amber-900 dark:text-amber-300">No Scores Yet</h4>
-                    <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
-                      Scores generate automatically when rounds complete. Or trigger manually:
-                    </p>
-                  </div>
-                  <Button
-                    size="sm"
-                    onClick={async () => {
-                      try {
-                        const response = await fetch('/api/score/trigger', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            session_id: session.id,
-                            round_number: 1
-                          })
-                        })
-                        const result = await response.json()
-                        console.log('Scoring triggered:', result)
-                        alert('Scoring triggered! Check Gate Panel in a few seconds.')
-                      } catch (err) {
-                        console.error('Failed to trigger scoring:', err)
-                        alert('Failed to trigger scoring. Check console.')
-                      }
-                    }}
-                  >
-                    Trigger Scoring
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Role Widget Configuration</CardTitle>
-              <CardDescription>
-                Hiring manager configurable flows for candidate-side role widgets. Saved config streams live to candidate view.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="space-y-2">
-                <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Role family</p>
-                <Select value={widgetRoleFamily} onValueChange={setWidgetRoleFamily}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select role family" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {roleWidgetFamilies.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" onClick={loadRoleWidgetTemplate}>
-                  Load Recommended Template
-                </Button>
-                <Button size="sm" onClick={saveRoleWidgetConfig} disabled={widgetConfigState === 'saving'}>
-                  {widgetConfigState === 'saving' ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                  Save Role Widget Config
-                </Button>
-              </div>
-
-              <Textarea
-                rows={12}
-                value={widgetConfigText}
-                onChange={(event) => setWidgetConfigText(event.target.value)}
-                placeholder='[{"id":"lane-1","title":"Lane","subtitle":"flow","steps":[{"id":"step-1","label":"Task","eta":"06s"}]}]'
-                className="font-mono text-xs"
-              />
-
-              {widgetConfigState === 'saved' && (
-                <p className="text-xs text-emerald-600">Role widget configuration saved.</p>
-              )}
-              {widgetConfigError && (
-                <p className="text-xs text-destructive">{widgetConfigError}</p>
-              )}
-            </CardContent>
-          </Card>
-
-          <GatePanel
-            overall={gateData.overall}
-            confidence={gateData.confidence}
-            dimensions={gateData.dimensions}
-            redFlags={gateData.redFlags}
-            truthLog={gateData.truthLog}
-            followups={mergedGateFollowups}
-            loading={!!sendingAction}
-            expectedDimensions={currentRoundRubric.expectedDimensions}
-            currentRoundNumber={currentRoundRubric.roundNumber}
-            onDecision={sendDecision}
-            onAction={(action) => {
-              if (action === 'escalate') {
-                void sendAction('escalate_difficulty')
-              }
-            }}
-            onAddFollowup={async (followup) => {
-              const lower = followup.toLowerCase().trim()
-              const alreadySent = followupThread.some(
-                (q) => q.question.toLowerCase().trim() === lower
-              ) || localFollowups.some(
-                (q) => q.question.toLowerCase().trim() === lower
-              )
-              if (alreadySent) return
-              await sendAction('manual_followup', { followup })
-            }}
-          />
-
-          <Card>
+          <Card className="xl:col-span-2">
             <CardHeader className="py-3">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base">Live Controls</CardTitle>
@@ -1662,6 +1658,94 @@ function InterviewerView() {
                                 </div>
                               )
                             })}
+                          </div>
+                        )
+                      })()}
+
+                      {/* AI Curveball Suggestions — text rounds only */}
+                      {(() => {
+                        const isTextRound = activeRound?.round_type === 'text'
+                        return (
+                          <div className="mt-3 space-y-2 border-t border-dashed pt-3">
+                            <div className="flex items-center justify-between">
+                              <label className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                                <Sparkles className="h-3 w-3" />
+                                AI Suggestions
+                              </label>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 px-2 text-[10px]"
+                                disabled={curveballSuggestionsLoading || !isTextRound || session?.status !== 'live'}
+                                onClick={fetchCurveballSuggestions}
+                              >
+                                {curveballSuggestionsLoading ? (
+                                  <><Loader2 className="mr-1 h-3 w-3 animate-spin" />Analyzing...</>
+                                ) : (
+                                  'Suggest'
+                                )}
+                              </Button>
+                            </div>
+
+                            {!isTextRound && (
+                              <p className="text-[10px] text-muted-foreground">
+                                AI suggestions available for text rounds only.
+                              </p>
+                            )}
+
+                            {curveballSuggestionsContext && (
+                              <p className="text-[10px] text-muted-foreground">
+                                {curveballSuggestionsContext}
+                              </p>
+                            )}
+
+                            {isTextRound && aiCurveballSuggestions.length === 0 && !curveballSuggestionsLoading && !curveballSuggestionsContext && (
+                              <p className="text-[10px] text-muted-foreground">
+                                Click &ldquo;Suggest&rdquo; to analyze candidate&apos;s response and get targeted curveball ideas.
+                              </p>
+                            )}
+
+                            {aiCurveballSuggestions.map((suggestion) => (
+                              <div key={suggestion.id} className="space-y-1.5 rounded-lg border p-3">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-medium">{suggestion.title}</span>
+                                  <Badge
+                                    variant={suggestion.priority === 'high' ? 'destructive' : 'secondary'}
+                                    className="h-4 px-1.5 text-[9px]"
+                                  >
+                                    {suggestion.priority}
+                                  </Badge>
+                                </div>
+                                <p className="text-xs text-foreground">{suggestion.detail}</p>
+                                <p className="text-[10px] italic text-muted-foreground">
+                                  Why: {suggestion.rationale}
+                                </p>
+                                {suggestion.source_evidence && (
+                                  <p className="text-[10px] text-muted-foreground">
+                                    Based on: &ldquo;{suggestion.source_evidence.slice(0, 100)}&rdquo;
+                                  </p>
+                                )}
+                                <div className="flex gap-2 pt-1">
+                                  <Button
+                                    size="sm"
+                                    variant="default"
+                                    className="h-6 px-2 text-[10px]"
+                                    disabled={!!sendingAction}
+                                    onClick={() => approveAiCurveball(suggestion)}
+                                  >
+                                    Inject
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-6 px-2 text-[10px]"
+                                    onClick={() => dismissAiCurveball(suggestion.id)}
+                                  >
+                                    Dismiss
+                                  </Button>
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         )
                       })()}
@@ -1868,56 +1952,7 @@ function InterviewerView() {
             )}
           </Card>
 
-          <Card>
-            <CardHeader className="py-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-base">Interviewer Notes</CardTitle>
-                  <CardDescription className="text-xs mt-0.5">Saved to session action logs when submitted.</CardDescription>
-                </div>
-                <Button variant="ghost" size="sm" onClick={() => setShowNotes((prev) => !prev)}>
-                  {showNotes ? 'Hide' : 'Show'}
-                </Button>
-              </div>
-            </CardHeader>
-            {showNotes && (<CardContent className="space-y-3">
-              <Textarea
-                rows={6}
-                value={notes}
-                onChange={(event) => setNotes(event.target.value)}
-                placeholder="Capture context for final recommendation, concern areas, and decision rationale..."
-              />
-              <Button
-                variant="secondary"
-                disabled={!!sendingAction || !notes.trim()}
-                onClick={async () => {
-                  if (!notes.trim()) return
-                  const result = await sendAction('interviewer_note', { note: notes })
-                  if (result?.ok) {
-                    setNotes('')
-                    setNoteSavedToast(true)
-                    setTimeout(() => setNoteSavedToast(false), 2500)
-                  }
-                }}
-              >
-                {sendingAction === 'interviewer_note' ? <Loader2 className="h-4 w-4 animate-spin" /> : <BadgeCheck className="h-4 w-4" />}
-                {sendingAction === 'interviewer_note' ? 'Saving...' : 'Save Note'}
-              </Button>
-              <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
-                <ShieldAlert className="mb-2 h-4 w-4" />
-                All interviewer actions, notes, and magic-link events are logged for audit and post-assessment review.
-              </div>
-              {noteSavedToast && (
-                <div className="flex items-center gap-2 rounded-lg border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-600 dark:text-emerald-400 animate-in fade-in slide-in-from-top-1 duration-200">
-                  <CheckCircle2 className="h-4 w-4 shrink-0" />
-                  Note saved successfully.
-                </div>
-              )}
-            </CardContent>
-            )}
-          </Card>
-
-          <Card>
+          <Card className="xl:col-span-2">
             <CardHeader className="py-3">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base">Follow-up Thread</CardTitle>
@@ -2062,27 +2097,507 @@ function InterviewerView() {
                     </div>
                   )}
                 </div>
-                {followupThread.length === 0 && (
-                  <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
-                    No follow-ups yet.
-                  </div>
-                )}
-                {followupThread.map((item) => (
-                  <div key={item.id} className="rounded-lg border bg-muted/20 p-3 text-sm">
-                    <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span>Round {item.round_number ?? '-'}</span>
-                      <span>{item.source === 'manual' ? 'Manual' : 'Auto'}</span>
+                <div className="hide-scrollbar max-h-[360px] space-y-3 overflow-y-auto pr-1">
+                  {followupThread.length === 0 && (
+                    <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
+                      No follow-ups yet.
                     </div>
-                    <p className="mt-2 font-semibold">Q: {item.question}</p>
-                    {item.answered ? (
-                      <p className="mt-2 text-muted-foreground">A: {item.answer}</p>
-                    ) : (
-                      <p className="mt-2 text-muted-foreground">Awaiting response.</p>
-                    )}
-                  </div>
-                ))}
+                  )}
+                  {followupThread.map((item) => (
+                    <div key={item.id} className="rounded-lg border bg-muted/20 p-3 text-sm">
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>Round {item.round_number ?? '-'}</span>
+                        <span>{item.source === 'manual' ? 'Manual' : 'Auto'}</span>
+                      </div>
+                      <p className="mt-2 font-semibold">Q: {item.question}</p>
+                      {item.answered ? (
+                        <p className="mt-2 text-muted-foreground">A: {item.answer}</p>
+                      ) : (
+                        <p className="mt-2 text-muted-foreground">Awaiting response.</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </CardContent>
             )}
+          </Card>
+
+        </section>
+
+        <aside className="space-y-6">
+          {/* Voice-Realtime Controls (only show when voice call is active) */}
+          {isVoiceRealtimeActive && (
+            <>
+              <VoiceControlPanel
+                sessionId={session.id}
+                isCallActive={isCallInProgress}
+                track={roleTrack}
+              />
+              <AIAssessmentsPanel sessionId={session.id} />
+
+              {analytics.sayMeter && (
+                <SayMeter
+                  score={analytics.sayMeter.score}
+                  factors={analytics.sayMeter.factors}
+                  summary={analytics.sayMeter.meter_reasoning}
+                  loading={analytics.loading}
+                />
+              )}
+
+              <SuggestionsPanel
+                suggestions={analytics.suggestions}
+                loading={analytics.loading}
+                onDismiss={analytics.dismissSuggestion}
+                onApply={(suggestion) => {
+                  console.log('Apply suggestion:', suggestion)
+                }}
+              />
+            </>
+          )}
+
+          {scores.length === 0 && (
+            <Card className="border-amber-200 bg-amber-50/90 dark:bg-amber-950/30">
+              <CardContent className="pt-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <h4 className="text-sm font-semibold text-amber-900 dark:text-amber-300">No Scores Yet</h4>
+                    <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
+                      Scores generate automatically when rounds complete. Or trigger manually:
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={async () => {
+                      try {
+                        const response = await authedFetch('/api/score/trigger', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            session_id: session.id,
+                            round_number: 1
+                          })
+                        })
+                        const result = await response.json()
+                        console.log('Scoring triggered:', result)
+                        alert('Scoring triggered! Check Gate Panel in a few seconds.')
+                      } catch (err) {
+                        console.error('Failed to trigger scoring:', err)
+                        alert('Failed to trigger scoring. Check console.')
+                      }
+                    }}
+                  >
+                    Trigger Scoring
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Role Widget Configuration</CardTitle>
+              <CardDescription>
+                Hiring manager configurable flows for candidate-side role widgets. Saved config streams live to candidate view.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-2">
+                <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Role family</p>
+                <Select value={widgetRoleFamily} onValueChange={setWidgetRoleFamily}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select role family" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {roleWidgetFamilies.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={loadRoleWidgetTemplate}>
+                  Load Recommended Template
+                </Button>
+                <Button size="sm" onClick={saveRoleWidgetConfig} disabled={widgetConfigState === 'saving'}>
+                  {widgetConfigState === 'saving' ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  Save Role Widget Config
+                </Button>
+              </div>
+
+              <Textarea
+                rows={12}
+                value={widgetConfigText}
+                onChange={(event) => setWidgetConfigText(event.target.value)}
+                placeholder='[{"id":"lane-1","title":"Lane","subtitle":"flow","steps":[{"id":"step-1","label":"Task","eta":"06s"}]}]'
+                className="font-mono text-xs"
+              />
+
+              {widgetConfigState === 'saved' && (
+                <p className="text-xs text-emerald-600">Role widget configuration saved.</p>
+              )}
+              {widgetConfigError && (
+                <p className="text-xs text-destructive">{widgetConfigError}</p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Agent Deployment Panel</CardTitle>
+              <CardDescription>
+                Deploy admin-configured webhook/API flows (n8n compatible) into this live session.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-2">
+                <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Flow</p>
+                <Select value={selectedDeploymentId} onValueChange={setSelectedDeploymentId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select configured deployment flow" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {deploymentConfigsForTrack.length === 0 ? (
+                      <SelectItem value="none" disabled>
+                        No flows for this role track
+                      </SelectItem>
+                    ) : (
+                      deploymentConfigsForTrack.map((config) => (
+                        <SelectItem key={config.id} value={config.id}>
+                          {config.name} ({config.http_method})
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Input JSON</p>
+                <Textarea
+                  rows={5}
+                  className="font-mono text-xs"
+                  value={deploymentInput}
+                  onChange={(event) => setDeploymentInput(event.target.value)}
+                  placeholder='{"notes":"optional runtime context"}'
+                />
+              </div>
+
+              <Button
+                size="sm"
+                className="w-full"
+                disabled={!selectedDeploymentId || deployingAgent || selectedDeploymentId === 'none'}
+                onClick={deploySelectedAgent}
+              >
+                {deployingAgent ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
+                {deployingAgent ? 'Deploying...' : 'Deploy Flow To Session'}
+              </Button>
+
+              {deploymentError ? (
+                <p className="text-xs text-destructive">{deploymentError}</p>
+              ) : null}
+
+              <div className="rounded-xl border p-3">
+                <p className="mb-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Recent Deployments</p>
+                <div className="hide-scrollbar max-h-[180px] space-y-2 overflow-y-auto pr-1">
+                  {deploymentRuns.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No deployments for this session yet.</p>
+                  ) : (
+                    deploymentRuns.map((run) => (
+                      <div key={run.id} className="rounded-lg border bg-muted/20 px-3 py-2 text-xs">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium">{run.deployment_name}</span>
+                          <Badge variant={run.status === 'success' ? 'secondary' : 'outline'}>{run.status}</Badge>
+                        </div>
+                        <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground">
+                          <span>{new Date(run.created_at).toLocaleTimeString()}</span>
+                          <span>HTTP {run.response_status || '-'}</span>
+                        </div>
+                        {run.error_message ? (
+                          <p className="mt-1 text-[10px] text-destructive">{run.error_message}</p>
+                        ) : null}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <GatePanel
+            overall={gateData.overall}
+            confidence={gateData.confidence}
+            dimensions={gateData.dimensions}
+            redFlags={gateData.redFlags}
+            truthLog={gateData.truthLog}
+            followups={mergedGateFollowups}
+            loading={!!sendingAction}
+            expectedDimensions={currentRoundRubric.expectedDimensions}
+            currentRoundNumber={currentRoundRubric.roundNumber}
+            onDecision={sendDecision}
+            onAction={(action) => {
+              if (action === 'escalate') {
+                void sendAction('escalate_difficulty')
+              }
+            }}
+            onAddFollowup={async (followup) => {
+              const lower = followup.toLowerCase().trim()
+              const alreadySent = followupThread.some(
+                (q) => q.question.toLowerCase().trim() === lower
+              ) || localFollowups.some(
+                (q) => q.question.toLowerCase().trim() === lower
+              )
+              if (alreadySent) return
+              await sendAction('manual_followup', { followup })
+            }}
+          />
+
+        </aside>
+        <aside className="space-y-2 xl:sticky xl:top-20 xl:h-fit">
+          <p className="px-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Widgets</p>
+          <Sheet>
+            <SheetTrigger asChild>
+              <button
+                type="button"
+                className="group flex w-full items-center gap-3 rounded-xl border border-border/70 bg-background/45 px-3 py-3 text-left transition hover:bg-background/65"
+              >
+                <MessageSquareText className="h-5 w-5 shrink-0 text-primary transition group-hover:scale-105" />
+                <div>
+                  <p className="text-sm font-medium">Notes</p>
+                  <p className="text-[11px] text-muted-foreground">Interviewer context</p>
+                </div>
+              </button>
+            </SheetTrigger>
+            <SheetContent side="right" className="w-[min(92vw,680px)] sm:max-w-none border-border/70 bg-background/95 p-6 backdrop-blur-xl">
+                  <SheetHeader>
+                    <SheetTitle className="text-xl">Interviewer Notes</SheetTitle>
+                    <SheetDescription>Saved to session action logs for traceability.</SheetDescription>
+                  </SheetHeader>
+                  <div className="mt-3 space-y-3">
+                    <Textarea
+                      rows={8}
+                      value={notes}
+                      onChange={(event) => setNotes(event.target.value)}
+                      placeholder="Capture context for final recommendation, concern areas, and decision rationale..."
+                      className="rounded-xl"
+                    />
+                    <Button
+                      variant="secondary"
+                      disabled={!!sendingAction || !notes.trim()}
+                      onClick={async () => {
+                        if (!notes.trim()) return
+                        const result = await sendAction('interviewer_note', { note: notes })
+                        if (result?.ok) {
+                          setNotes('')
+                          setNoteSavedToast(true)
+                          setTimeout(() => setNoteSavedToast(false), 2500)
+                        }
+                      }}
+                    >
+                      {sendingAction === 'interviewer_note' ? <Loader2 className="h-4 w-4 animate-spin" /> : <BadgeCheck className="h-4 w-4" />}
+                      {sendingAction === 'interviewer_note' ? 'Saving...' : 'Save Note'}
+                    </Button>
+                    {noteSavedToast ? (
+                      <div className="rounded-lg border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
+                        Note saved successfully.
+                      </div>
+                    ) : null}
+                  </div>
+                </SheetContent>
+          </Sheet>
+
+          <Sheet>
+            <SheetTrigger asChild>
+              <button
+                type="button"
+                className="group flex w-full items-center gap-3 rounded-xl border border-border/70 bg-background/45 px-3 py-3 text-left transition hover:bg-background/65"
+              >
+                <FileSearch className="h-5 w-5 shrink-0 text-primary transition group-hover:scale-105" />
+                <div>
+                  <p className="text-sm font-medium">Resume</p>
+                  <p className="text-[11px] text-muted-foreground">Candidate PDF view</p>
+                </div>
+              </button>
+            </SheetTrigger>
+            <SheetContent side="right" className="w-[min(96vw,1200px)] sm:max-w-none border-border/70 bg-background/95 p-6 backdrop-blur-xl">
+                  <SheetHeader>
+                    <SheetTitle className="text-xl">Quick Resume View</SheetTitle>
+                    <SheetDescription>Live file from candidate artifacts or profile storage path.</SheetDescription>
+                  </SheetHeader>
+                  <div className="mt-3 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-xs text-muted-foreground">
+                        {resumePreviewState === 'loading'
+                          ? 'Loading resume preview...'
+                          : resumePreviewState === 'ready'
+                            ? resumePreview?.filename || 'Resume PDF'
+                            : resumePreviewState === 'missing'
+                              ? 'No resume uploaded for this candidate.'
+                              : resumePreviewState === 'error'
+                                ? resumePreviewError || 'Unable to load resume preview.'
+                                : ''}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button size="sm" variant="outline" onClick={() => void fetchResumePreview(session.id)}>
+                          Refresh
+                        </Button>
+                        {resolvedResumeUrl ? (
+                          <Button size="sm" variant="outline" asChild>
+                            <a href={resolvedResumeUrl} target="_blank" rel="noreferrer">
+                              <ExternalLink className="h-4 w-4" />
+                              Open
+                            </a>
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="overflow-hidden rounded-xl border">
+                      {resolvedResumeUrl ? (
+                        <iframe src={resolvedResumeUrl} title="Candidate resume preview" className="h-[82vh] w-full" />
+                      ) : (
+                        <div className="flex h-[240px] items-center justify-center bg-muted/20 p-6 text-sm text-muted-foreground">
+                          Resume PDF not available yet.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </SheetContent>
+          </Sheet>
+
+          <Sheet>
+            <SheetTrigger asChild>
+              <button
+                type="button"
+                className="group flex w-full items-center gap-3 rounded-xl border border-border/70 bg-background/45 px-3 py-3 text-left transition hover:bg-background/65"
+              >
+                <ScrollText className="h-5 w-5 shrink-0 text-primary transition group-hover:scale-105" />
+                <div>
+                  <p className="text-sm font-medium">Transcript</p>
+                  <p className="text-[11px] text-muted-foreground">Conversation feed</p>
+                </div>
+              </button>
+            </SheetTrigger>
+            <SheetContent side="right" className="w-[min(96vw,860px)] sm:max-w-none border-border/70 bg-background/95 p-6 backdrop-blur-xl">
+                  <SheetHeader>
+                    <SheetTitle className="text-xl">Live Transcript</SheetTitle>
+                    <SheetDescription>Conversation and candidate statements in chronological order.</SheetDescription>
+                  </SheetHeader>
+                  <div className="hide-scrollbar mt-3 max-h-[calc(100vh-9rem)] space-y-3 overflow-y-auto pr-1">
+                    {transcript.length === 0 ? (
+                      <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
+                        Transcript will populate after the conversation starts.
+                      </div>
+                    ) : (
+                      transcript.map((entry, index) => (
+                        <div key={`${entry.time}-${index}`} className="rounded-lg border bg-muted/20 p-3">
+                          <div className="flex items-center justify-between text-xs text-muted-foreground">
+                            <span>{entry.speaker}</span>
+                            <span>{entry.time}</span>
+                          </div>
+                          <p className="mt-2 text-sm">{entry.content}</p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </SheetContent>
+          </Sheet>
+
+          <Sheet>
+            <SheetTrigger asChild>
+              <button
+                type="button"
+                className="group flex w-full items-center gap-3 rounded-xl border border-border/70 bg-background/45 px-3 py-3 text-left transition hover:bg-background/65"
+              >
+                <ListOrdered className="h-5 w-5 shrink-0 text-primary transition group-hover:scale-105" />
+                <div>
+                  <p className="text-sm font-medium">Action Log</p>
+                  <p className="text-[11px] text-muted-foreground">Event timeline</p>
+                </div>
+              </button>
+            </SheetTrigger>
+            <SheetContent side="right" className="w-[min(96vw,900px)] sm:max-w-none border-border/70 bg-background/95 p-6 backdrop-blur-xl">
+                  <SheetHeader>
+                    <SheetTitle className="text-xl">Candidate Action Log</SheetTitle>
+                    <SheetDescription>System timeline of candidate and interview actions.</SheetDescription>
+                  </SheetHeader>
+                  <div className="hide-scrollbar mt-3 max-h-[calc(100vh-9rem)] space-y-2 overflow-y-auto pr-1">
+                    {actionLog.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">Waiting for actions...</p>
+                    ) : (
+                      actionLog.map((entry, index) => (
+                        <div key={`${entry.time}-${index}`} className="grid grid-cols-[1fr,1fr,auto] items-center gap-2 rounded-lg border bg-muted/20 p-2.5 text-sm">
+                          <span>{entry.action}</span>
+                          <span className="truncate text-muted-foreground">{entry.detail || '-'}</span>
+                          <span className="text-xs text-muted-foreground">{entry.time}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </SheetContent>
+          </Sheet>
+
+          <Card className="mt-3">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm">Candidate Activity</CardTitle>
+              <CardDescription className="text-xs">
+                Live metrics from events, scores, artifacts.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {candidateActivityMetrics.map((metric) => {
+                const MetricIcon = metric.icon
+                return (
+                  <div key={metric.key} className="rounded-xl border border-border/60 bg-background/35 px-3 py-2.5 backdrop-blur">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{metric.label}</p>
+                      <MetricIcon className="h-3.5 w-3.5 text-primary" />
+                    </div>
+                    <p className="mt-1 text-lg font-semibold tracking-tight">{metric.value}</p>
+                    <p className="text-[10px] text-muted-foreground">{metric.helper}</p>
+                  </div>
+                )
+              })}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm">Rounds</CardTitle>
+              <CardDescription className="text-xs">Round timeline</CardDescription>
+            </CardHeader>
+            <CardContent className="hide-scrollbar max-h-[320px] space-y-2 overflow-y-auto pr-1">
+              {roundTimeline.length === 0 && (
+                <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
+                  No rounds are loaded for this session.
+                </div>
+              )}
+              {roundTimeline.map((round) => {
+                const roundStatusVariant =
+                  round.status === 'active' ? 'default' : round.status === 'completed' ? 'secondary' : 'outline'
+
+                return (
+                  <div key={round.round_number} className="rounded-lg border bg-muted/20 p-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-xs font-medium">
+                          R{round.round_number}: {round.title}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {round.startedAt
+                            ? `${round.startedAt.toLocaleTimeString()} to ${round.endsAt?.toLocaleTimeString()}`
+                            : `${round.durationMinutes} min`}
+                        </p>
+                      </div>
+                      <Badge variant={roundStatusVariant} className="text-[10px]">
+                        {round.status}
+                      </Badge>
+                    </div>
+                  </div>
+                )
+              })}
+            </CardContent>
           </Card>
         </aside>
         </div>

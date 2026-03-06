@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase/client'
+import { authedFetch } from '@/lib/supabase/authed-fetch'
 import type { Artifact, InterviewSession, Round, Score, Event, InterviewScopePackage } from '@/lib/types/database'
 
 export function useRealtimeSession(sessionId: string) {
@@ -19,7 +20,7 @@ export function useRealtimeSession(sessionId: string) {
     if (refreshInFlight.current) return
     refreshInFlight.current = true
     try {
-      const response = await fetch(`/api/session/${sessionId}`, { cache: 'no-store' })
+      const response = await authedFetch(`/api/session/${sessionId}`, { cache: 'no-store' })
       if (response.ok) {
         const data = await response.json()
 

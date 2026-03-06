@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase/server'
-import { generateFollowups, scoreArtifact, STANDARD_DIMENSIONS } from '@/lib/ai/score-smith'
+import { generateFollowups, scoreArtifact, STANDARD_DIMENSIONS, ADAPTABILITY_DIMENSION } from '@/lib/ai/score-smith'
+import type { CurveballContext } from '@/lib/ai/score-smith'
 import { emitRedFlag, fetchScopePackage } from '@/lib/db/helpers'
 
 export async function runScoringForArtifact(artifactId: string) {
@@ -44,7 +45,26 @@ export async function runScoringForArtifact(artifactId: string) {
     throw new Error('Round not found in scope package')
   }
 
+  // Read curveballs injected during this round
+  const injectedCurveballs: CurveballContext[] = Array.isArray(round?.config?.injected_curveballs)
+    ? round.config.injected_curveballs.map((c: any) => ({
+        key: c.key,
+        title: c.title || c.key || 'Unknown constraint',
+        detail: c.detail || '',
+        injected_at: c.injected_at
+      }))
+    : []
+
   const dimensions = getDimensionsForRound(round)
+
+  // Add adaptability dimension when curveballs were injected
+  if (injectedCurveballs.length > 0) {
+    const hasAdaptability = dimensions.some((d: any) => d.name === 'adaptability')
+    if (!hasAdaptability) {
+      dimensions.push(ADAPTABILITY_DIMENSION)
+    }
+  }
+
   const track = scopePackage.track || ''
 
   // Handle empty/very short content: emit red flag and return early with zero score
@@ -96,7 +116,8 @@ export async function runScoringForArtifact(artifactId: string) {
     artifact.id,
     contentString,
     dimensions,
-    track
+    track,
+    injectedCurveballs.length > 0 ? injectedCurveballs : undefined
   )
 
   const dimensionScores: Record<string, number> = {}
@@ -231,7 +252,11 @@ export async function runScoringForArtifact(artifactId: string) {
       round_number: round.round_number,
       overall_score: overallScore,
       dimensions: results.length,
-      recommendation
+      recommendation,
+      curveballs_evaluated: injectedCurveballs.length > 0 ? injectedCurveballs.length : undefined,
+      adaptability_score: injectedCurveballs.length > 0
+        ? dimensionScores['adaptability'] ?? null
+        : undefined
     }
   })
 

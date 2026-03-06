@@ -14,6 +14,13 @@ export function TextResponseUI({ round }: { round: Round }) {
   const [workflow, setWorkflow] = useState<Record<string, { details: string; quality: string }>>({})
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Reset all input state when the round changes
+  useEffect(() => {
+    setResponse('')
+    setOutputs({})
+    setWorkflow({})
+  }, [round.round_number])
+
   useEffect(() => {
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current)

@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:3000": "next dev -p 3000",
+    "dev:reset": "sh -c 'pkill -f \"node .*next dev\" || true; pkill -f \"next-server\" || true; rm -rf .next; next dev -p 3000'",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase/server'
 import { extractResumeSkills, computeInterviewLevel } from '@/lib/db/helpers'
+import { requireInterviewer, requireSessionAccess } from '@/lib/supabase/require-role'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,6 +11,8 @@ export async function GET(
 ) {
   try {
     const { id: sessionId } = await params
+    const gate = await requireSessionAccess(request, sessionId)
+    if (!gate.ok) return gate.response
 
     // Get session (interview_sessions table)
     const { data: session, error: sessionError } = await supabaseAdmin
@@ -121,6 +124,9 @@ export async function PATCH(
 ) {
   try {
     const { id: sessionId } = await params
+    const gate = await requireInterviewer(request)
+    if (!gate.ok) return gate.response
+
     const updates = await request.json()
 
     const { data, error } = await supabaseAdmin
