@@ -1,121 +1,135 @@
-'use client'
+"use client";
 
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Textarea } from '@/components/ui/textarea'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { useSession } from '@/contexts/SessionContext'
-import type { Round } from '@/lib/types/database'
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useSession } from "@/contexts/SessionContext";
+import type { Round } from "@/lib/types/database";
 
 export function CodeEditorUI({ round }: { round: Round }) {
-  const { session } = useSession()
-  const initialCode = typeof round.config?.starter_code === 'string' ? round.config.starter_code : ''
+  const { session } = useSession();
+  const initialCode =
+    typeof round.config?.starter_code === "string"
+      ? round.config.starter_code
+      : "";
   const languageOptions = Array.isArray(round.config?.languages)
     ? round.config.languages
     : round.config?.language
       ? [round.config.language]
-      : []
+      : [];
 
-  const [code, setCode] = useState(initialCode)
-  const [language, setLanguage] = useState(languageOptions[0] || 'plaintext')
-  const [isSaving, setIsSaving] = useState(false)
-  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null)
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [code, setCode] = useState(initialCode);
+  const [language, setLanguage] = useState(languageOptions[0] || "plaintext");
+  const [isSaving, setIsSaving] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const lineCount = useMemo(() => code.split(/\n/).length, [code])
+  const lineCount = useMemo(() => code.split(/\n/).length, [code]);
 
   useEffect(() => {
     return () => {
-      if (saveTimer.current) clearTimeout(saveTimer.current)
-    }
-  }, [])
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, []);
 
   const saveDraft = async (payload: { code: string; language: string }) => {
-    if (!session) return
-    setIsSaving(true)
-    await fetch('/api/artifact/submit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    if (!session) return;
+    setIsSaving(true);
+    await fetch("/api/artifact/submit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         session_id: session.id,
         round_number: round.round_number,
-        artifact_type: 'code_response',
+        artifact_type: "code_response",
         content: payload.code,
         metadata: {
           draft: true,
           language: payload.language,
           line_count: payload.code.split(/\n/).length,
-          char_count: payload.code.length
-        }
-      })
-    })
-    setLastSavedAt(new Date())
-    setIsSaving(false)
-  }
+          char_count: payload.code.length,
+        },
+      }),
+    });
+    setLastSavedAt(new Date());
+    setIsSaving(false);
+  };
 
   const scheduleSave = (nextCode: string, nextLanguage = language) => {
-    if (saveTimer.current) clearTimeout(saveTimer.current)
+    if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      saveDraft({ code: nextCode, language: nextLanguage })
-    }, 700)
-  }
+      saveDraft({ code: nextCode, language: nextLanguage });
+    }, 700);
+  };
 
   const handleCodeChange = (value: string) => {
-    setCode(value)
-    scheduleSave(value)
+    setCode(value);
+    scheduleSave(value);
 
     // Signal content to parent
     window.dispatchEvent(
-      new CustomEvent('round-content-change', {
-        detail: { round_number: round.round_number, hasContent: value.trim().length > 0 && value.trim() !== initialCode.trim() }
-      })
-    )
-  }
+      new CustomEvent("round-content-change", {
+        detail: {
+          round_number: round.round_number,
+          hasContent:
+            value.trim().length > 0 && value.trim() !== initialCode.trim(),
+        },
+      }),
+    );
+  };
 
   const handleLanguageChange = (value: string) => {
-    setLanguage(value)
-    scheduleSave(code, value)
-  }
+    setLanguage(value);
+    scheduleSave(code, value);
+  };
 
   // Auto-save on timer expiry: submit final non-draft code
-  const codeRef = useRef(code)
-  codeRef.current = code
-  const languageRef = useRef(language)
-  languageRef.current = language
+  const codeRef = useRef(code);
+  codeRef.current = code;
+  const languageRef = useRef(language);
+  languageRef.current = language;
 
   useEffect(() => {
     const handler = async (e: Event) => {
-      const detail = (e as CustomEvent).detail
-      if (detail?.round_number !== round.round_number || !session?.id) return
-      if (!codeRef.current || codeRef.current === initialCode) return
-      if (saveTimer.current) clearTimeout(saveTimer.current)
-      await fetch('/api/artifact/submit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const detail = (e as CustomEvent).detail;
+      if (detail?.round_number !== round.round_number || !session?.id) return;
+      if (!codeRef.current || codeRef.current === initialCode) return;
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      await fetch("/api/artifact/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_id: session.id,
           round_number: round.round_number,
-          artifact_type: 'code_response',
+          artifact_type: "code_response",
           content: codeRef.current,
           metadata: {
             draft: false,
             auto_saved: true,
             language: languageRef.current,
             line_count: codeRef.current.split(/\n/).length,
-            char_count: codeRef.current.length
-          }
-        })
-      }).catch(() => {})
-    }
-    window.addEventListener('round-auto-save', handler)
-    return () => window.removeEventListener('round-auto-save', handler)
-  }, [round.round_number, session?.id, initialCode])
+            char_count: codeRef.current.length,
+          },
+        }),
+      }).catch(() => {});
+    };
+    window.addEventListener("round-auto-save", handler);
+    return () => window.removeEventListener("round-auto-save", handler);
+  }, [round.round_number, session?.id, initialCode]);
 
-  if (!session) return null
+  if (!session) return null;
 
   return (
     <div className="space-y-4">
-      <div className="rounded-2xl border bg-card px-4 py-3 text-sm text-muted-foreground">
-        Use the editor below to write your solution. It will autosave as you type.
+      <div className="rounded-2xl border border-border/60 bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+        Use the editor below to write your solution. It will autosave as you
+        type.
       </div>
 
       {languageOptions.length > 0 && (
@@ -125,7 +139,7 @@ export function CodeEditorUI({ round }: { round: Round }) {
           </label>
           <Select value={language} onValueChange={handleLanguageChange}>
             <SelectTrigger>
-              <SelectValue placeholder="Select language" />
+              <SelectValue />
             </SelectTrigger>
             <SelectContent>
               {languageOptions.map((lang: string) => (
@@ -142,26 +156,28 @@ export function CodeEditorUI({ round }: { round: Round }) {
         rows={18}
         value={code}
         onChange={(e) => handleCodeChange(e.target.value)}
-        placeholder="Write your solution here..."
         className="min-h-[320px] font-mono text-xs"
       />
 
-      <div className="flex flex-wrap items-center justify-between rounded-2xl border bg-card px-4 py-3 text-xs text-muted-foreground">
-        <span>Lines: {lineCount} &middot; Characters: {code.length}</span>
+      <div className="flex flex-wrap items-center justify-between rounded-2xl border border-border/60 bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
+        <span>
+          Lines: {lineCount} &middot; Characters: {code.length}
+        </span>
         <span>
           {isSaving
-            ? 'Saving...'
+            ? "Saving..."
             : lastSavedAt
               ? `Saved at ${lastSavedAt.toLocaleTimeString()}`
-              : 'Draft not saved yet'}
+              : "Draft not saved yet"}
         </span>
       </div>
 
       {round.config?.evaluation_focus && (
-        <div className="rounded-2xl border bg-card px-4 py-3 text-sm text-muted-foreground">
-          <strong className="text-foreground">Evaluation focus:</strong> {round.config.evaluation_focus}
+        <div className="rounded-2xl border border-border/60 bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+          <strong className="text-foreground">Evaluation focus:</strong>{" "}
+          {round.config.evaluation_focus}
         </div>
       )}
     </div>
-  )
+  );
 }
