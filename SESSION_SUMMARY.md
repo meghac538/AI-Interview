@@ -1,0 +1,7 @@
+# Pre-Compact Session Summary — 2026-03-06 06:27
+Session: `1519907d-edad-4c24-b4bd-baf07dc3c093`
+Compact type: auto
+CALM tokens saved: 61
+
+## Compressed Context
+Recent Merge pull from abhinandc/codex/main-uplink remote-tracking branch 7cc3d20 assessment UX, admin preview, About Merge: Add system ElevenLabs analytics enhance voice SuggestionsPanel add guide 4da19d8 test data for SuggestionsPanel add shared documentation add SuggestionsPanel component for AI coaching resolve critical useVoiceAnalysis hook Write -> /mnt/onenas/projects/ai-interview/src/app/page.tsx Edit /mnt/onenas/projects/ai-interview/src/app/page.tsx Edit /mnt/onenas/projects/ai-interview/src/app/page.tsx Edit /mnt/onenas/projects/ai-interview/src/app/globals.css Edit /mnt/onenas/projects/ai-interview/src/app/globals.css Edit /mnt/onenas/projects/ai-interview/src/app/globals.css Edit /mnt/onenas/projects/ai-interview/src/app/globals.css Edit /mnt/onenas/projects/ai-interview/src/components/ui/sign-in-1.tsx Edit /mnt/onenas/projects/ai-interview/src/components/ui/sign-in-1.tsx Edit /mnt/onenas/projects/ai-interview/src/components/ui/sign-in-1.tsx Edit /mnt/onenas/projects/ai-interview/src/components/ui/sign-in-1.tsx Edit /mnt/onenas/projects/ai-interview/src/components/ui/sign-in-1.tsx Edit /mnt/onenas/projects/ai-interview/src/app/page.tsx Edit /mnt/onenas/projects/ai-interview/src/app/globals.css Edit /mnt/onenas/projects/ai-interview/src/app/page.tsx

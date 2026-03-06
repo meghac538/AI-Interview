@@ -1,7 +1,7 @@
-"use client"
+"use client";
 
-import { useEffect, useMemo, useRef, useState } from "react"
-import { useParams } from "next/navigation"
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams } from "next/navigation";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -9,18 +9,25 @@ import {
   ShieldCheck,
   Sparkles,
   TimerReset,
-  Workflow
-} from "lucide-react"
-import { SessionProvider, useSession } from "@/contexts/SessionContext"
-import { TaskSurface } from "@/components/TaskSurface"
-import { SidekickPanel } from "@/components/SidekickPanel"
-import { RoleFlowHub } from "@/components/role-flow-hub"
-import { ThemeToggle } from "@/components/theme-toggle"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { Progress } from "@/components/ui/progress"
-import { Textarea } from "@/components/ui/textarea"
+  Workflow,
+} from "lucide-react";
+import { SessionProvider, useSession } from "@/contexts/SessionContext";
+import { TaskSurface } from "@/components/TaskSurface";
+import { SidekickPanel } from "@/components/SidekickPanel";
+import { RoleFlowHub } from "@/components/role-flow-hub";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
+import { Textarea } from "@/components/ui/textarea";
 
 function AutoStopOverlay() {
   return (
@@ -28,125 +35,156 @@ function AutoStopOverlay() {
       <div className="text-center space-y-4">
         <div className="mx-auto h-10 w-10 animate-spin rounded-full border-b-2 border-primary" />
         <p className="text-lg font-semibold">Session Ending</p>
-        <p className="text-sm text-muted-foreground">Please wait while we wrap up...</p>
+        <p className="text-sm text-muted-foreground">
+          Please wait while we wrap up...
+        </p>
       </div>
     </div>
-  )
+  );
 }
 
 function CandidateWorkspace() {
-  const { session, scopePackage, rounds, currentRound, events, loading } = useSession()
-  const [timeLeft, setTimeLeft] = useState(0)
-  const [endAt, setEndAt] = useState<number | null>(null)
-  const [submitting, setSubmitting] = useState(false)
-  const autoSubmitFired = useRef(false)
-  const [followupAnswer, setFollowupAnswer] = useState('')
-  const [followupGateRound, setFollowupGateRound] = useState<number | null>(null)
-  const [forcedFollowupId, setForcedFollowupId] = useState<string | null>(null)
-  const [forcedFollowupQuestion, setForcedFollowupQuestion] = useState<string | null>(null)
+  const { session, scopePackage, rounds, currentRound, events, loading } =
+    useSession();
+  const [timeLeft, setTimeLeft] = useState(0);
+  const [endAt, setEndAt] = useState<number | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const autoSubmitFired = useRef(false);
+  const [followupAnswer, setFollowupAnswer] = useState("");
+  const [followupGateRound, setFollowupGateRound] = useState<number | null>(
+    null,
+  );
+  const [forcedFollowupId, setForcedFollowupId] = useState<string | null>(null);
+  const [forcedFollowupQuestion, setForcedFollowupQuestion] = useState<
+    string | null
+  >(null);
   const [serverFollowups, setServerFollowups] = useState<
-    Array<{ id: string; question: string; round_number?: number | null; source?: string }>
-  >([])
+    Array<{
+      id: string;
+      question: string;
+      round_number?: number | null;
+      source?: string;
+    }>
+  >([]);
   const [localFollowups, setLocalFollowups] = useState<
     Array<{ question_id: string; question: string; round_number: number }>
-  >([])
+  >([]);
   const [localAnswers, setLocalAnswers] = useState<
-    Array<{ question_id: string; question: string; answer: string; round_number: number }>
-  >([])
+    Array<{
+      question_id: string;
+      question: string;
+      answer: string;
+      round_number: number;
+    }>
+  >([]);
 
   const followupThread = useMemo(() => {
-    if (!currentRound) return []
+    if (!currentRound) return [];
     const questions = (events || [])
       .filter(
         (event) =>
-          event.event_type === 'followup_question' &&
+          event.event_type === "followup_question" &&
           (event.payload?.round_number == null ||
-            Number(event.payload?.round_number) === currentRound.round_number)
+            Number(event.payload?.round_number) === currentRound.round_number),
       )
-      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+      .sort(
+        (a, b) =>
+          new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      );
 
     const manualQuestions = (events || [])
       .filter(
         (event) =>
-          event.event_type === 'interviewer_action' &&
-          event.payload?.action_type === 'manual_followup' &&
-          event.payload?.followup
+          event.event_type === "interviewer_action" &&
+          event.payload?.action_type === "manual_followup" &&
+          event.payload?.followup,
       )
       .map((event) => ({
         payload: {
           question_id: event.payload?.question_id,
           question: event.payload?.followup,
-          round_number: event.payload?.round_number ?? event.payload?.target_round
+          round_number:
+            event.payload?.round_number ?? event.payload?.target_round,
         },
-        created_at: event.created_at
+        created_at: event.created_at,
       }))
       .filter(
         (event) =>
           event.payload?.round_number == null ||
-          Number(event.payload?.round_number) === currentRound.round_number
-      )
+          Number(event.payload?.round_number) === currentRound.round_number,
+      );
 
     const answers = (events || [])
       .filter(
         (event) =>
-          event.event_type === 'followup_answer' &&
+          event.event_type === "followup_answer" &&
           (event.payload?.round_number == null ||
-            Number(event.payload?.round_number) === currentRound.round_number)
+            Number(event.payload?.round_number) === currentRound.round_number),
       )
-      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+      .sort(
+        (a, b) =>
+          new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      );
 
     const localQuestions = localFollowups
       .filter((item) => Number(item.round_number) === currentRound.round_number)
       .map((item) => ({
         payload: {
           question_id: item.question_id,
-          question: item.question
+          question: item.question,
         },
-        created_at: new Date().toISOString()
-      }))
+        created_at: new Date().toISOString(),
+      }));
 
     const serverQuestions = serverFollowups
       .filter(
         (item) =>
           item.round_number == null ||
-          Number(item.round_number) === currentRound.round_number
+          Number(item.round_number) === currentRound.round_number,
       )
       .map((item) => ({
         payload: {
           question_id: item.id,
-          question: item.question
+          question: item.question,
         },
-        created_at: new Date().toISOString()
-      }))
+        created_at: new Date().toISOString(),
+      }));
 
     const localAnswerEvents = localAnswers
       .filter((item) => Number(item.round_number) === currentRound.round_number)
       .map((item) => ({
         payload: {
           question_id: item.question_id,
-          answer: item.answer
+          answer: item.answer,
         },
-        created_at: new Date().toISOString()
-      }))
+        created_at: new Date().toISOString(),
+      }));
 
     const allQuestions = [
       ...localQuestions,
       ...serverQuestions,
       ...manualQuestions,
-      ...questions
-    ].reduce((acc, item) => {
-      const id = item.payload?.question_id
-      if (!id || acc.some((q) => q.payload?.question_id === id)) return acc
-      acc.push(item)
-      return acc
-    }, [] as Array<{ payload?: Record<string, any>; created_at: string; [key: string]: any }>)
+      ...questions,
+    ].reduce(
+      (acc, item) => {
+        const id = item.payload?.question_id;
+        if (!id || acc.some((q) => q.payload?.question_id === id)) return acc;
+        acc.push(item);
+        return acc;
+      },
+      [] as Array<{
+        payload?: Record<string, any>;
+        created_at: string;
+        [key: string]: any;
+      }>,
+    );
 
-    const allAnswers = [...answers, ...localAnswerEvents]
+    const allAnswers = [...answers, ...localAnswerEvents];
 
-    const answerMap = new Map<string, string>()
+    const answerMap = new Map<string, string>();
     for (const answer of allAnswers) {
       if (answer.payload?.question_id) {
-        answerMap.set(answer.payload.question_id, answer.payload?.answer || '')
+        answerMap.set(answer.payload.question_id, answer.payload?.answer || "");
       }
     }
 
@@ -157,10 +195,10 @@ function CandidateWorkspace() {
         forcedFollowupQuestion &&
         question.payload?.question_id === forcedFollowupId
           ? forcedFollowupQuestion
-          : question.payload?.question || '',
+          : question.payload?.question || "",
       answered: answerMap.has(question.payload?.question_id),
-      answer: answerMap.get(question.payload?.question_id)
-    }))
+      answer: answerMap.get(question.payload?.question_id),
+    }));
   }, [
     events,
     currentRound,
@@ -168,55 +206,57 @@ function CandidateWorkspace() {
     localAnswers,
     forcedFollowupId,
     forcedFollowupQuestion,
-    serverFollowups
-  ])
+    serverFollowups,
+  ]);
 
   const autoStopTriggered = useMemo(() => {
     return (events || []).some(
       (e: any) =>
-        e.event_type === 'auto_stop_triggered' ||
-        e.event_type === 'session_force_stopped'
-    )
-  }, [events])
+        e.event_type === "auto_stop_triggered" ||
+        e.event_type === "session_force_stopped",
+    );
+  }, [events]);
 
   const cautionCount = useMemo(() => {
     return (events || []).filter(
-      (e: any) => e.event_type === 'red_flag_detected'
-    ).length
-  }, [events])
+      (e: any) => e.event_type === "red_flag_detected",
+    ).length;
+  }, [events]);
 
   const pendingFollowup =
     (forcedFollowupId
-      ? followupThread.find((item) => item.id === forcedFollowupId && !item.answered)
-      : null) ||
-    followupThread.find((item) => item.id && !item.answered)
-  const hasPendingFollowups = Boolean(pendingFollowup)
+      ? followupThread.find(
+          (item) => item.id === forcedFollowupId && !item.answered,
+        )
+      : null) || followupThread.find((item) => item.id && !item.answered);
+  const hasPendingFollowups = Boolean(pendingFollowup);
   const showFollowups =
-    Boolean(followupGateRound && currentRound?.round_number === followupGateRound) ||
-    hasPendingFollowups
+    Boolean(
+      followupGateRound && currentRound?.round_number === followupGateRound,
+    ) || hasPendingFollowups;
 
   // Load follow-up thread
   useEffect(() => {
-    if (!session?.id) return
+    if (!session?.id) return;
     const loadThread = async () => {
       try {
-        const response = await fetch('/api/followup/thread', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: session.id })
-        })
+        const response = await fetch("/api/followup/thread", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: session.id }),
+        });
         if (response.ok) {
-          const data = await response.json()
+          const data = await response.json();
           if (Array.isArray(data?.thread)) {
-            setServerFollowups(data.thread)
+            setServerFollowups(data.thread);
           }
         }
       } catch {
         // Best-effort sync.
       }
-    }
-    loadThread()
-  }, [session?.id])
+    };
+    loadThread();
+  }, [session?.id]);
 
   // Auto-start first round
   useEffect(() => {
@@ -229,121 +269,139 @@ function CandidateWorkspace() {
         const response = await fetch("/api/round/start", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ session_id: session.id, round_number: 1 })
-        })
+          body: JSON.stringify({ session_id: session.id, round_number: 1 }),
+        });
 
         if (response.ok) {
-          const updatedRound = await response.json()
-          const durationMinutes = Number(updatedRound?.duration_minutes || currentRound.duration_minutes || 0)
+          const updatedRound = await response.json();
+          const durationMinutes = Number(
+            updatedRound?.duration_minutes ||
+              currentRound.duration_minutes ||
+              0,
+          );
           const startedAt = updatedRound?.started_at
             ? new Date(updatedRound.started_at).getTime()
-            : Date.now()
+            : Date.now();
 
-          const nextEndAt = startedAt + durationMinutes * 60 * 1000
-          setEndAt(nextEndAt)
-          setTimeLeft(Math.max(0, Math.ceil((nextEndAt - Date.now()) / 1000)))
-          autoSubmitFired.current = false
+          const nextEndAt = startedAt + durationMinutes * 60 * 1000;
+          setEndAt(nextEndAt);
+          setTimeLeft(Math.max(0, Math.ceil((nextEndAt - Date.now()) / 1000)));
+          autoSubmitFired.current = false;
         }
       }
-    }
+    };
 
-    void autoStartRound()
-  }, [session?.id, session?.status, currentRound?.round_number, currentRound?.status, currentRound?.duration_minutes])
+    void autoStartRound();
+  }, [
+    session?.id,
+    session?.status,
+    currentRound?.round_number,
+    currentRound?.status,
+    currentRound?.duration_minutes,
+  ]);
 
   // Sync timer with active round
   useEffect(() => {
     if (currentRound?.status === "active") {
-      const durationMinutes = Number(currentRound.duration_minutes || 0)
+      const durationMinutes = Number(currentRound.duration_minutes || 0);
       const startedAt = currentRound.started_at
         ? new Date(currentRound.started_at).getTime()
-        : Date.now()
-      const nextEndAt = startedAt + durationMinutes * 60 * 1000
-      setEndAt(nextEndAt)
-      setTimeLeft(Math.max(0, Math.ceil((nextEndAt - Date.now()) / 1000)))
-      autoSubmitFired.current = false
+        : Date.now();
+      const nextEndAt = startedAt + durationMinutes * 60 * 1000;
+      setEndAt(nextEndAt);
+      setTimeLeft(Math.max(0, Math.ceil((nextEndAt - Date.now()) / 1000)));
+      autoSubmitFired.current = false;
     }
-  }, [currentRound?.round_number, currentRound?.status, currentRound?.duration_minutes, currentRound?.started_at])
+  }, [
+    currentRound?.round_number,
+    currentRound?.status,
+    currentRound?.duration_minutes,
+    currentRound?.started_at,
+  ]);
 
   // Timer countdown
   useEffect(() => {
-    if (!endAt) return
+    if (!endAt) return;
 
     const tick = () => {
-      const remaining = Math.max(0, Math.ceil((endAt - Date.now()) / 1000))
-      setTimeLeft(remaining)
+      const remaining = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
+      setTimeLeft(remaining);
       if (remaining === 0 && currentRound && !autoSubmitFired.current) {
-        autoSubmitFired.current = true
-        void handleSubmit(true)
+        autoSubmitFired.current = true;
+        void handleSubmit(true);
       }
-    }
+    };
 
-    tick()
-    const interval = setInterval(tick, 1000)
-    return () => clearInterval(interval)
-  }, [endAt, currentRound?.round_number])
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [endAt, currentRound?.round_number]);
 
   const handleSubmit = async (auto = false) => {
-    if (!session || !currentRound || submitting) return
+    if (!session || !currentRound || submitting) return;
 
     // Auto-submit bypasses follow-up gating
     if (auto) {
-      setSubmitting(true)
+      setSubmitting(true);
       await fetch("/api/round/complete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_id: session.id,
-          round_number: currentRound.round_number
-        })
-      })
+          round_number: currentRound.round_number,
+        }),
+      });
 
-      const nextRound = rounds.find((round) => round.round_number === currentRound.round_number + 1)
+      const nextRound = rounds.find(
+        (round) => round.round_number === currentRound.round_number + 1,
+      );
       if (nextRound) {
         await fetch("/api/round/start", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             session_id: session.id,
-            round_number: nextRound.round_number
-          })
-        })
+            round_number: nextRound.round_number,
+          }),
+        });
       }
 
-      setSubmitting(false)
-      setTimeLeft(0)
-      return
+      setSubmitting(false);
+      setTimeLeft(0);
+      return;
     }
 
     // Follow-up gating
-    if (hasPendingFollowups) return
+    if (hasPendingFollowups) return;
 
     try {
-      const pendingResponse = await fetch('/api/followup/pending', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const pendingResponse = await fetch("/api/followup/pending", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_id: session.id,
-          round_number: currentRound.round_number
-        })
-      })
+          round_number: currentRound.round_number,
+        }),
+      });
       if (pendingResponse.ok) {
-        const data = await pendingResponse.json()
+        const data = await pendingResponse.json();
         if (data.pending && data.question_id && data.question) {
           setLocalFollowups((prev) => {
-            if (prev.some((item) => item.question_id === data.question_id)) return prev
+            if (prev.some((item) => item.question_id === data.question_id))
+              return prev;
             return [
               ...prev,
               {
                 question_id: data.question_id,
                 question: data.question,
-                round_number: currentRound.round_number
-              }
-            ]
-          })
-          setForcedFollowupId(data.question_id)
-          setForcedFollowupQuestion(data.question)
-          setFollowupGateRound(currentRound.round_number)
-          return
+                round_number: currentRound.round_number,
+              },
+            ];
+          });
+          setForcedFollowupId(data.question_id);
+          setForcedFollowupQuestion(data.question);
+          setFollowupGateRound(currentRound.round_number);
+          return;
         }
       }
     } catch {
@@ -351,38 +409,39 @@ function CandidateWorkspace() {
     }
 
     try {
-      const threadResponse = await fetch('/api/followup/thread', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: session.id })
-      })
+      const threadResponse = await fetch("/api/followup/thread", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: session.id }),
+      });
       if (threadResponse.ok) {
-        const data = await threadResponse.json()
-        const thread = Array.isArray(data?.thread) ? data.thread : []
+        const data = await threadResponse.json();
+        const thread = Array.isArray(data?.thread) ? data.thread : [];
         const unanswered = thread.filter(
           (item: any) =>
             (item.round_number == null ||
               Number(item.round_number) === currentRound.round_number) &&
-            !item.answered
-        )
-        const manual = unanswered.find((item: any) => item.source === 'manual')
-        const pending = manual || unanswered[0]
+            !item.answered,
+        );
+        const manual = unanswered.find((item: any) => item.source === "manual");
+        const pending = manual || unanswered[0];
         if (pending?.id && pending?.question) {
           setLocalFollowups((prev) => {
-            if (prev.some((item) => item.question_id === pending.id)) return prev
+            if (prev.some((item) => item.question_id === pending.id))
+              return prev;
             return [
               ...prev,
               {
                 question_id: pending.id,
                 question: pending.question,
-                round_number: currentRound.round_number
-              }
-            ]
-          })
-          setForcedFollowupId(pending.id)
-          setForcedFollowupQuestion(pending.question)
-          setFollowupGateRound(currentRound.round_number)
-          return
+                round_number: currentRound.round_number,
+              },
+            ];
+          });
+          setForcedFollowupId(pending.id);
+          setForcedFollowupQuestion(pending.question);
+          setFollowupGateRound(currentRound.round_number);
+          return;
         }
       }
     } catch {
@@ -390,51 +449,54 @@ function CandidateWorkspace() {
     }
 
     if (followupThread.length > 0) {
-      setFollowupGateRound(currentRound.round_number)
-      return
+      setFollowupGateRound(currentRound.round_number);
+      return;
     }
 
-    const followupResponse = await fetch('/api/followup/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    const followupResponse = await fetch("/api/followup/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         session_id: session.id,
-        round_number: currentRound.round_number
-      })
-    })
+        round_number: currentRound.round_number,
+      }),
+    });
 
     if (followupResponse.ok) {
-      const data = await followupResponse.json()
+      const data = await followupResponse.json();
       if (data.generated) {
         if (data.question_id && data.question) {
           setLocalFollowups((prev) => {
-            if (prev.some((item) => item.question_id === data.question_id)) return prev
+            if (prev.some((item) => item.question_id === data.question_id))
+              return prev;
             return [
               ...prev,
               {
                 question_id: data.question_id,
                 question: data.question,
-                round_number: currentRound.round_number
-              }
-            ]
-          })
+                round_number: currentRound.round_number,
+              },
+            ];
+          });
         }
-        return
+        return;
       }
     }
 
     // Complete current round
-    setSubmitting(true)
+    setSubmitting(true);
     await fetch("/api/round/complete", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         session_id: session.id,
-        round_number: currentRound.round_number
-      })
-    })
+        round_number: currentRound.round_number,
+      }),
+    });
 
-    const nextRound = rounds.find((round) => round.round_number === currentRound.round_number + 1)
+    const nextRound = rounds.find(
+      (round) => round.round_number === currentRound.round_number + 1,
+    );
 
     if (nextRound) {
       await fetch("/api/round/start", {
@@ -442,32 +504,32 @@ function CandidateWorkspace() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_id: session.id,
-          round_number: nextRound.round_number
-        })
-      })
+          round_number: nextRound.round_number,
+        }),
+      });
     }
 
-    setSubmitting(false)
-  }
+    setSubmitting(false);
+  };
 
   const submitFollowupAnswer = async () => {
-    if (!pendingFollowup || !session || !currentRound) return
-    if (!followupAnswer.trim()) return
+    if (!pendingFollowup || !session || !currentRound) return;
+    if (!followupAnswer.trim()) return;
 
-    await fetch('/api/artifact/submit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    await fetch("/api/artifact/submit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         session_id: session.id,
         round_number: currentRound.round_number,
-        artifact_type: 'followup_answer',
+        artifact_type: "followup_answer",
         content: followupAnswer.trim(),
         metadata: {
           question_id: pendingFollowup.id,
-          question: pendingFollowup.question
-        }
-      })
-    })
+          question: pendingFollowup.question,
+        },
+      }),
+    });
 
     if (pendingFollowup?.id && pendingFollowup.question) {
       setLocalAnswers((prev) => [
@@ -476,22 +538,22 @@ function CandidateWorkspace() {
           question_id: pendingFollowup.id,
           question: pendingFollowup.question,
           answer: followupAnswer.trim(),
-          round_number: currentRound.round_number
-        }
-      ])
+          round_number: currentRound.round_number,
+        },
+      ]);
     }
     if (forcedFollowupId && pendingFollowup?.id === forcedFollowupId) {
-      setForcedFollowupId(null)
-      setForcedFollowupQuestion(null)
+      setForcedFollowupId(null);
+      setForcedFollowupQuestion(null);
     }
-    setFollowupAnswer('')
-  }
+    setFollowupAnswer("");
+  };
 
   const formattedTime = useMemo(() => {
-    const minutes = Math.floor(timeLeft / 60)
-    const seconds = timeLeft % 60
-    return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
-  }, [timeLeft])
+    const minutes = Math.floor(timeLeft / 60);
+    const seconds = timeLeft % 60;
+    return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+  }, [timeLeft]);
 
   if (loading) {
     return (
@@ -501,7 +563,7 @@ function CandidateWorkspace() {
           Loading candidate workspace...
         </div>
       </main>
-    )
+    );
   }
 
   if (!session || !currentRound) {
@@ -511,39 +573,52 @@ function CandidateWorkspace() {
           <CardHeader>
             <CardTitle>Session unavailable</CardTitle>
             <CardDescription>
-              No active session was found. Return to candidate login and re-enter using your invite email.
+              No active session was found. Return to candidate login and
+              re-enter using your invite email.
             </CardDescription>
           </CardHeader>
         </Card>
       </main>
-    )
+    );
   }
 
   if (autoStopTriggered) {
-    return <AutoStopOverlay />
+    return <AutoStopOverlay />;
   }
 
-  const currentRoundNumber = currentRound.round_number || 1
-  const progress = ((currentRoundNumber - 1) / Math.max(rounds.length, 1)) * 100
+  const currentRoundNumber = currentRound.round_number || 1;
+  const progress =
+    ((currentRoundNumber - 1) / Math.max(rounds.length, 1)) * 100;
 
-  const candidateName = (session as any).candidate?.name || "Candidate"
-  const roleName = (session as any).job?.title || "Assessment"
-  const roleTrack = (session as any).job?.track || "sales"
-  const configuredRoleWidgets = (scopePackage as any)?.simulation_payloads?.role_widget_config?.lanes
-  const configuredRoleFamily = (scopePackage as any)?.simulation_payloads?.role_widget_config?.role_family || roleTrack
+  const candidateName = (session as any).candidate?.name || "Candidate";
+  const roleName = (session as any).job?.title || "Assessment";
+  const roleTrack = (session as any).job?.track || "sales";
+  const configuredRoleWidgets = (scopePackage as any)?.simulation_payloads
+    ?.role_widget_config?.lanes;
+  const configuredRoleFamily =
+    (scopePackage as any)?.simulation_payloads?.role_widget_config
+      ?.role_family || roleTrack;
 
   return (
     <main className="surface-grid min-h-screen px-5 py-8 md:px-10 md:py-10">
       <div className="mx-auto max-w-[1880px] space-y-7">
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-2">
-            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">OneOrigin Candidate Workspace</p>
-            <h1 className="text-4xl font-semibold leading-tight tracking-[-0.01em] md:text-5xl">{roleName}</h1>
-            <p className="text-sm tracking-[0.01em] text-muted-foreground">{candidateName}</p>
+            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+              OneOrigin Candidate Workspace
+            </p>
+            <h1 className="text-4xl font-semibold leading-tight tracking-[-0.01em] md:text-5xl">
+              {roleName}
+            </h1>
+            <p className="text-sm tracking-[0.01em] text-muted-foreground">
+              {candidateName}
+            </p>
           </div>
 
           <div className="flex items-center gap-2">
-            <Badge variant="secondary" className="capitalize">{session.status}</Badge>
+            <Badge variant="secondary" className="capitalize">
+              {session.status}
+            </Badge>
             <ThemeToggle />
           </div>
         </header>
@@ -553,17 +628,23 @@ function CandidateWorkspace() {
           <div className="flex items-center gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-5 py-3">
             <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" />
             <div>
-              <p className="text-sm font-semibold text-amber-800 dark:text-amber-400">Caution noted</p>
+              <p className="text-sm font-semibold text-amber-800 dark:text-amber-400">
+                Caution noted
+              </p>
               <p className="text-xs text-amber-700 dark:text-amber-300">
-                The interviewer has noted a concern with your response. Please review your answer carefully and ensure accuracy.
+                The interviewer has noted a concern with your response. Please
+                review your answer carefully and ensure accuracy.
               </p>
             </div>
           </div>
         )}
 
-        <div className="grid gap-7 xl:grid-cols-[360px_minmax(0,1fr)] 2xl:gap-10">
-          <aside className="order-2 xl:order-none">
-            <RoleFlowHub lanes={configuredRoleWidgets} roleFamily={configuredRoleFamily} />
+        <div className="grid gap-7 xl:grid-cols-[340px_minmax(0,1fr)] 2xl:gap-10">
+          <aside className="scrollbar-none order-2 xl:sticky xl:top-8 xl:order-none xl:max-h-[calc(100vh-80px)] xl:overflow-y-auto">
+            <RoleFlowHub
+              lanes={configuredRoleWidgets}
+              roleFamily={configuredRoleFamily}
+            />
           </aside>
 
           <section className="order-1 xl:order-none">
@@ -573,10 +654,15 @@ function CandidateWorkspace() {
               <CardHeader className="relative z-10 space-y-6 p-7 md:p-10">
                 <div className="flex flex-wrap items-start justify-between gap-6">
                   <div className="space-y-3">
-                    <CardDescription className="uppercase tracking-[0.2em]">Center Canvas</CardDescription>
+                    <CardDescription className="uppercase tracking-[0.2em]">
+                      Center Canvas
+                    </CardDescription>
                     <CardTitle className="text-3xl leading-[1.1] tracking-tight md:text-5xl">
                       Round {String(currentRoundNumber).padStart(2, "0")}
-                      <span className="text-muted-foreground"> / {String(rounds.length).padStart(2, "0")}</span>
+                      <span className="text-muted-foreground">
+                        {" "}
+                        / {String(rounds.length).padStart(2, "0")}
+                      </span>
                     </CardTitle>
                     <p className="max-w-3xl text-sm leading-7 tracking-[0.01em] text-muted-foreground md:text-base">
                       {currentRound.title}
@@ -585,13 +671,21 @@ function CandidateWorkspace() {
 
                   <div className="grid w-full gap-3 sm:w-auto sm:grid-cols-2">
                     <div className="rounded-2xl border border-border/60 bg-background/40 px-5 py-4 text-right backdrop-blur">
-                      <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Progress</p>
-                      <p className="text-4xl font-bold leading-none tracking-tight">{Math.round(progress)}%</p>
+                      <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                        Progress
+                      </p>
+                      <p className="text-4xl font-bold leading-none tracking-tight">
+                        {Math.round(progress)}%
+                      </p>
                     </div>
 
                     <div className="rounded-2xl border border-border/60 bg-primary/10 px-5 py-4 text-right backdrop-blur">
-                      <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Time</p>
-                      <p className="text-4xl font-bold leading-none tracking-tight text-primary md:text-5xl">{formattedTime}</p>
+                      <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                        Time
+                      </p>
+                      <p className="text-4xl font-bold leading-none tracking-tight text-primary md:text-5xl">
+                        {formattedTime}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -606,28 +700,37 @@ function CandidateWorkspace() {
 
                 <div className="grid gap-3 md:grid-cols-3">
                   <div className="rounded-2xl border border-border/60 bg-background/35 p-4 backdrop-blur">
-                    <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Flow</p>
+                    <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                      Flow
+                    </p>
                     <p className="mt-1 flex items-center gap-1 text-sm font-medium">
-                      <Workflow className="h-4 w-4 text-primary" /> Agentic widgets active
+                      <Workflow className="h-4 w-4 text-primary" /> Agentic
+                      widgets active
                     </p>
                   </div>
                   <div className="rounded-2xl border border-border/60 bg-background/35 p-4 backdrop-blur">
-                    <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Integrity</p>
+                    <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                      Integrity
+                    </p>
                     <p className="mt-1 flex items-center gap-1 text-sm font-medium">
-                      <ShieldCheck className="h-4 w-4 text-emerald-500" /> Policy tracking on
+                      <ShieldCheck className="h-4 w-4 text-emerald-500" />{" "}
+                      Policy tracking on
                     </p>
                   </div>
                   <div className="rounded-2xl border border-border/60 bg-background/35 p-4 backdrop-blur">
-                    <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Assist</p>
+                    <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                      Assist
+                    </p>
                     <p className="mt-1 flex items-center gap-1 text-sm font-medium">
-                      <Sparkles className="h-4 w-4 text-amber-500" /> Astra ready at edge
+                      <Sparkles className="h-4 w-4 text-amber-500" /> Astra
+                      ready at edge
                     </p>
                   </div>
                 </div>
               </CardHeader>
 
               <CardContent className="relative z-10 px-7 pb-6 md:px-10">
-                <div className="rounded-2xl border border-border/60 bg-background/35 p-6 backdrop-blur md:p-8">
+                <div className="rounded-2xl border border-border/60 bg-background/80 p-6 backdrop-blur md:p-8">
                   {/* Follow-up thread */}
                   {showFollowups && followupThread.length > 0 && (
                     <div className="mb-6 space-y-3 rounded-2xl border p-4">
@@ -636,12 +739,19 @@ function CandidateWorkspace() {
                       </div>
                       <div className="space-y-3 text-sm">
                         {followupThread.map((item) => (
-                          <div key={item.id} className="rounded-2xl bg-muted/30 px-4 py-3">
+                          <div
+                            key={item.id}
+                            className="rounded-2xl bg-muted/30 px-4 py-3"
+                          >
                             <p className="font-semibold">Q: {item.question}</p>
                             {item.answered ? (
-                              <p className="mt-2 text-muted-foreground">A: {item.answer}</p>
+                              <p className="mt-2 text-muted-foreground">
+                                A: {item.answer}
+                              </p>
                             ) : (
-                              <p className="mt-2 text-muted-foreground">Awaiting your response.</p>
+                              <p className="mt-2 text-muted-foreground">
+                                Awaiting your response.
+                              </p>
                             )}
                           </div>
                         ))}
@@ -652,8 +762,12 @@ function CandidateWorkspace() {
                   {/* Pending follow-up answer */}
                   {showFollowups && hasPendingFollowups && (
                     <div className="mb-6 space-y-3 rounded-2xl border border-primary/30 bg-primary/5 px-4 py-4">
-                      <div className="text-sm font-semibold">Answer the follow-up</div>
-                      <p className="text-sm text-muted-foreground">{pendingFollowup?.question}</p>
+                      <div className="text-sm font-semibold">
+                        Answer the follow-up
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        {pendingFollowup?.question}
+                      </p>
                       <Textarea
                         rows={5}
                         placeholder="Write your response to the follow-up question..."
@@ -661,7 +775,11 @@ function CandidateWorkspace() {
                         onChange={(e) => setFollowupAnswer(e.target.value)}
                       />
                       <div className="flex items-center gap-3">
-                        <Button size="sm" onClick={submitFollowupAnswer} disabled={!followupAnswer.trim()}>
+                        <Button
+                          size="sm"
+                          onClick={submitFollowupAnswer}
+                          disabled={!followupAnswer.trim()}
+                        >
                           Submit follow-up
                         </Button>
                         <span className="text-xs text-muted-foreground">
@@ -678,7 +796,8 @@ function CandidateWorkspace() {
               <CardFooter className="relative z-10 flex flex-wrap items-center justify-between gap-3 px-7 pb-7 md:px-10 md:pb-10">
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <TimerReset className="h-4 w-4" />
-                  Responses are evaluated live and auto-submitted when timer expires.
+                  Responses are evaluated live and auto-submitted when timer
+                  expires.
                 </div>
 
                 <Button
@@ -701,16 +820,16 @@ function CandidateWorkspace() {
 
       <SidekickPanel role={roleName} />
     </main>
-  )
+  );
 }
 
 export default function CandidatePage() {
-  const params = useParams()
-  const sessionId = params.sessionId as string
+  const params = useParams();
+  const sessionId = params.sessionId as string;
 
   return (
     <SessionProvider sessionId={sessionId}>
       <CandidateWorkspace />
     </SessionProvider>
-  )
+  );
 }
